@@ -7,6 +7,8 @@
 #include <vector>
 #include <cmath>
 #include <limits>
+#include <numeric>
+#include <algorithm>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -22,10 +24,85 @@
 
 using namespace std;
 
+    // -d <DET_TYPE> -m <MAT_TYPE> -s <SEL_TYP> [-v[isible]] [-f[ocusOnVehicle]] [-l[imitKpts]]
+    // DET_TYPE:  SHITOMASI, HARRIS, FAST, BRISK, ORB, AKAZE, SIFT
+    // MAT_TYPE:  MAT_BF, MAT_FLANN
+    // DES_TYPE:  BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+    // SEL_TYPE:  SEL_NN, SEL_KNN
+
+void usage(const char *progname) {
+    cout << "usage: " << endl;
+    cout << progname << " -d <DETECTOR_TYPE> -m <MATCHER_TYPE> -x <DESCRIPTOR_TYPE> -s <SELECTOR_TYPE> \\" << endl;
+    cout << "    [-v] [-f] [-l]" << endl;
+    cout << "-v: visualize results" << endl;
+    cout << "-f: focus on vehicle rectangle" << endl;
+    cout << "-l: limit keypts" << endl;    
+    cout << "-b: run compiled in batch tests (output stats.csv) ";
+    cout << "" << endl;
+    cout << "DETECTOR_TYPE:  SHITOMASI, HARRIS, FAST, BRISK, ORB, AKAZE, SIFT" << endl;
+    cout << "MATCHER_TYPE:  MAT_BF, MAT_FLANN" << endl;
+    cout << "DESCRIPTOR_TYPE: BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT" << endl;
+    cout << "SELECTOR_TYPE:  SEL_NN, SEL_KNN" << endl;
+    cout << "";
+    cout << "Example:" << endl;
+    cout << "  ./2D_feature_tracking -d SHITOMASI -m MAT_BF -x BRISK -s SEL_NN" << endl;
+}
+
 /* MAIN PROGRAM */
 int main(int argc, const char *argv[])
 {
     /* INIT VARIABLES AND DATA STRUCTURES */
+    string detectorType = "";    // SHITOMASI, HARRIS, FAST, BRISK, ORB, FREAK, AKAZE, SIFT
+    string matcherType = "";     // MAT_BF, MAT_FLANN
+    string descriptorType = "";  // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+    string selectorType = "";    // SEL_NN, SEL_KNN
+
+    bool bVis = false;            // visualize results
+    bool bFocusOnVehicle = false;
+    bool bLimitKpts = false;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-d") == 0) {
+            detectorType = argv[++i];
+            cout << "DetectorType: " << detectorType << endl;
+        } else if (strcmp(argv[i], "-m") == 0) {
+            matcherType = argv[++i];
+            cout << "MatcherType: " << matcherType << endl;
+        } else if (strcmp(argv[i], "-x") == 0) {
+            descriptorType = argv[++i];
+            cout << "DescriptorType: " << descriptorType << endl;
+        } else if (strcmp(argv[i], "-s") == 0) {
+            selectorType = argv[++i];
+            cout << "SelectorType: " << selectorType << endl;
+        } else if (strncmp(argv[i], "-v", 2) == 0) {
+            bVis = true;
+            printf("\bvisualize: %d", bVis);
+        } else if (strncmp(argv[i], "-f", 2) == 0) {
+            bFocusOnVehicle = true;
+            printf("\bfocusOnVehicle: %d", bFocusOnVehicle);   
+        } else if (strncmp(argv[i], "-l", 2) == 0) {
+            bLimitKpts = true;
+            printf("\blimitKpts: %d", bLimitKpts);         
+        } else {
+            cout << "unexpected argument found: " << argv[i] << endl;
+            exit(-1);
+        }
+    }
+
+    if (detectorType == "" || matcherType == "" || descriptorType == "" || selectorType == "") {
+        cout << "incomplete arguments given." << endl;
+        usage(argv[0]);
+        exit(-1);
+    }
+
+    eval_stats stats;
+    eval_summary summary;
+    memset(&summary, 0, sizeof(eval_summary));
+
+    summary.detector_type = detectorType;
+    summary.matcher_type = matcherType;
+    summary.descriptor_type = descriptorType;
+    summary.selector_type = selectorType;
 
     // data location
     string dataPath = "../";
@@ -36,7 +113,7 @@ int main(int argc, const char *argv[])
     string imgFileType = ".png";
     int imgStartIndex = 0; // first file index to load (assumes Lidar and camera names have identical naming convention)
     int imgEndIndex = 18;   // last file index to load
-    int imgStepWidth = 1; 
+    int imgStepWidth = 1;   // can use for decreasing the frame rate (testing)
     int imgFillWidth = 4;  // no. of digits which make up the file index (e.g. img-0001.png)
 
     // object detection
@@ -71,8 +148,8 @@ int main(int argc, const char *argv[])
     // misc
     double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
     int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
-    vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
-    bool bVis = false;            // visualize results
+    // vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
+    DataBuffer<DataFrame> dataBuffer(dataBufferSize); 
 
     /* MAIN LOOP OVER ALL IMAGES */
 
@@ -113,7 +190,7 @@ int main(int argc, const char *argv[])
         std::vector<LidarPoint> lidarPoints;
         loadLidarFromFile(lidarPoints, lidarFullFilename);
 
-        // remove Lidar points based on distance properties
+        // remove Lidar points based on distance properties (assumes level road surface).
         float minZ = -1.5, maxZ = -0.9, minX = 2.0, maxX = 20.0, maxY = 2.0, minR = 0.1; // focus on ego lane
         cropLidarPoints(lidarPoints, minX, maxX, maxY, minZ, maxZ, minR);
     
@@ -181,11 +258,18 @@ int main(int argc, const char *argv[])
         cout << "#5 : DETECT KEYPOINTS done" << endl;
 
 
-        /* EXTRACT KEYPOINT DESCRIPTORS */
-
+        int normType;
         cv::Mat descriptors;
-        string descriptorType = "BRISK"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
-        descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorType);
+        try {
+            stats = descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorType, normType);
+            summary.description_time[imgIndex] = stats.time;
+        } catch (exception &e) {
+            cerr << "Exception occurred while processing descriptors: " << e.what() << endl;
+            summary.des_err_cnt += 1;
+            continue;
+        }
+        
+        //// EOF STUDENT ASSIGNMENT
 
         // push descriptors for current frame to end of data buffer
         (dataBuffer.end() - 1)->descriptors = descriptors;
@@ -199,13 +283,21 @@ int main(int argc, const char *argv[])
             /* MATCH KEYPOINT DESCRIPTORS */
 
             vector<cv::DMatch> matches;
-            string matcherType = "MAT_BF";        // MAT_BF, MAT_FLANN
-            string descriptorType = "DES_BINARY"; // DES_BINARY, DES_HOG
-            string selectorType = "SEL_NN";       // SEL_NN, SEL_KNN
+            try {
+                stats = matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
+                                (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
+                                matches, normType, matcherType, selectorType);
+                summary.match_time[imgIndex] = stats.time;
+                summary.match_points[imgIndex] = stats.points;
+            } catch (exception &e) {
+                cerr << "Exception occurred while processing matches: " << e.what() << endl;
+                summary.mat_err_cnt += 1;
+                continue;
+            }
 
             matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
                              (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
-                             matches, descriptorType, matcherType, selectorType);
+                             matches, normType, matcherType, selectorType);
 
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
