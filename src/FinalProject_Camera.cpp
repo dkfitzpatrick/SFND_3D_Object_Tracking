@@ -97,15 +97,18 @@ int main(int argc, const char *argv[])
 
     eval_stats stats;
     eval_summary summary;
-    memset(&summary, 0, sizeof(eval_summary));
 
     summary.detector_type = detectorType;
     summary.matcher_type = matcherType;
     summary.descriptor_type = descriptorType;
     summary.selector_type = selectorType;
+    summary.det_err_cnt = 0;
+    summary.des_err_cnt = 0;
+    summary.mat_err_cnt = 0;
 
     // data location
-    string dataPath = "../";
+    // string dataPath = "../";
+    string dataPath = "/home/dan/SFND_3D_Object_Tracking/";
 
     // camera
     string imgBasePath = dataPath + "images/";
@@ -152,7 +155,7 @@ int main(int argc, const char *argv[])
     DataBuffer<DataFrame> dataBuffer(dataBufferSize); 
 
     /* MAIN LOOP OVER ALL IMAGES */
-
+    double t;
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
     {
         /* LOAD IMAGE INTO BUFFER */
@@ -162,31 +165,43 @@ int main(int argc, const char *argv[])
         imgNumber << setfill('0') << setw(imgFillWidth) << imgStartIndex + imgIndex;
         string imgFullFilename = imgBasePath + imgPrefix + imgNumber.str() + imgFileType;
 
+        cout << "#0 : LOAD IMAGE INTO BUFFER..." << endl;
         // load image from file 
+        t = (double)cv::getTickCount();
         cv::Mat img = cv::imread(imgFullFilename);
+        t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
 
         // push image into data frame buffer
         DataFrame frame;
         frame.cameraImg = img;
         dataBuffer.push_back(frame);
 
-        cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
-
+        cout << "#1 : LOAD IMAGE INTO BUFFER.  done in " << t*1000 << "[ms]" << endl;
 
         /* DETECT & CLASSIFY OBJECTS */
 
         float confThreshold = 0.2;
         float nmsThreshold = 0.4;        
-        detectObjects((dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->boundingBoxes, confThreshold, nmsThreshold,
-                      yoloBasePath, yoloClassesFile, yoloModelConfiguration, yoloModelWeights, bVis);
-
-        cout << "#2 : DETECT & CLASSIFY OBJECTS done" << endl;
-
+        cout << "#2 : DETECT & CLASSIFY OBJECTS..." << endl;
+        try {
+            t = (double)cv::getTickCount();
+            detectObjects((dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->boundingBoxes, confThreshold, nmsThreshold,
+                        yoloBasePath, yoloClassesFile, yoloModelConfiguration, yoloModelWeights, bVis);
+            t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+            summary.classify_time.push_back(t);
+            cout << "#2 : DETECT & CLASSIFY OBJECTS.  done in " << t*1000 << "[ms]" << endl;
+        } catch (exception &e) {
+            cerr << "#2 : DETECT & CLASSIFY OBJECTS. Exception occurred: " << e.what() << endl;
+            continue;
+        }
 
         /* CROP LIDAR POINTS */
 
         // load 3D Lidar points from file
+
         string lidarFullFilename = imgBasePath + lidarPrefix + imgNumber.str() + lidarFileType;
+        cout << "#3 : LOAD AND CROP LIDAR POINTS..." << endl;
+        t = (double)cv::getTickCount();
         std::vector<LidarPoint> lidarPoints;
         loadLidarFromFile(lidarPoints, lidarFullFilename);
 
@@ -195,29 +210,31 @@ int main(int argc, const char *argv[])
         cropLidarPoints(lidarPoints, minX, maxX, maxY, minZ, maxZ, minR);
     
         (dataBuffer.end() - 1)->lidarPoints = lidarPoints;
+        t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+        summary.lidar_process_time.push_back(t);
 
-        cout << "#3 : CROP LIDAR POINTS done" << endl;
-
+        cout << "#3 : LOAD AND CROP LIDAR POINTS. done in " << t*1000 << "[ms]" << endl;
 
         /* CLUSTER LIDAR POINT CLOUD */
 
+        cout << "#4 : CLUSTER LIDAR POINT CLOUD..." << endl;
+        t = (double)cv::getTickCount();
         // associate Lidar points with camera-based ROI
         float shrinkFactor = 0.10; // shrinks each bounding box by the given percentage to avoid 3D object merging at the edges of an ROI
         clusterLidarWithROI((dataBuffer.end()-1)->boundingBoxes, (dataBuffer.end() - 1)->lidarPoints, shrinkFactor, P_rect_00, R_rect_00, RT);
+        t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
 
         // Visualize 3D objects
-        bVis = true;
         if(bVis)
         {
-            show3DObjects((dataBuffer.end()-1)->boundingBoxes, cv::Size(4.0, 20.0), cv::Size(2000, 2000), true);
+            show3DObjects((dataBuffer.end()-1)->boundingBoxes, cv::Size(4.0, 20.0), cv::Size(1200, 1200), true);
         }
-        bVis = false;
 
-        cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << endl;
+        cout << "#4 : CLUSTER LIDAR POINT CLOUD. done in " << t*1000 << "[ms]" << endl;
         
         
         // REMOVE THIS LINE BEFORE PROCEEDING WITH THE FINAL PROJECT
-        continue; // skips directly to the next image without processing what comes beneath
+        // continue; // skips directly to the next image without processing what comes beneath
 
         /* DETECT IMAGE KEYPOINTS */
 
@@ -227,15 +244,20 @@ int main(int argc, const char *argv[])
 
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
-        string detectorType = "SHITOMASI";
-
-        if (detectorType.compare("SHITOMASI") == 0)
-        {
-            detKeypointsShiTomasi(keypoints, imgGray, false);
-        }
-        else
-        {
-            //...
+        try {
+            if (detectorType.compare("SHITOMASI") == 0) {
+                stats = detKeypointsShiTomasi(keypoints, imgGray, bVis);
+            } else if (detectorType.compare("HARRIS") == 0) {
+                stats = detKeypointsHarris(keypoints, imgGray, bVis);
+            } else {
+                stats = detKeypointsModern(keypoints, imgGray, detectorType, bVis);
+            }
+            summary.detect_time.push_back(stats.time);
+            summary.detect_points.push_back(stats.points);
+        } catch (exception &e) {
+            cerr << "Exception occurred while processing keypoints: " << e.what() << endl;
+            summary.det_err_cnt += 1;
+            continue;
         }
 
         // optional : limit number of keypoints (helpful for debugging and learning)
@@ -262,7 +284,7 @@ int main(int argc, const char *argv[])
         cv::Mat descriptors;
         try {
             stats = descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorType, normType);
-            summary.description_time[imgIndex] = stats.time;
+            summary.description_time.push_back(stats.time);
         } catch (exception &e) {
             cerr << "Exception occurred while processing descriptors: " << e.what() << endl;
             summary.des_err_cnt += 1;
@@ -287,17 +309,13 @@ int main(int argc, const char *argv[])
                 stats = matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
                                 (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
                                 matches, normType, matcherType, selectorType);
-                summary.match_time[imgIndex] = stats.time;
-                summary.match_points[imgIndex] = stats.points;
+                summary.match_time.push_back(stats.time);
+                summary.match_points.push_back(stats.points);
             } catch (exception &e) {
                 cerr << "Exception occurred while processing matches: " << e.what() << endl;
                 summary.mat_err_cnt += 1;
                 continue;
             }
-
-            matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
-                             (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
-                             matches, normType, matcherType, selectorType);
 
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
@@ -359,7 +377,6 @@ int main(int argc, const char *argv[])
                     computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
                     //// EOF STUDENT ASSIGNMENT
 
-                    bVis = true;
                     if (bVis)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
@@ -376,8 +393,6 @@ int main(int argc, const char *argv[])
                         cout << "Press key to continue to next frame" << endl;
                         cv::waitKey(0);
                     }
-                    bVis = false;
-
                 } // eof TTC computation
             } // eof loop over all BB matches            
 

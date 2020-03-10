@@ -37,8 +37,6 @@ struct DataFrame { // represents the available sensor information at the same ti
     std::map<int,int> bbMatches; // bounding box matches between previous and current frame
 };
 
-#define MAX_EVALS 10
-
 struct eval_stats {
     double time;
     int points;
@@ -54,12 +52,14 @@ struct eval_summary {
     int des_err_cnt;
     int mat_err_cnt;
 
-    double  detect_time[MAX_EVALS];
-    int     detect_points[MAX_EVALS];
-    int     detect_veh_points[MAX_EVALS];
-    double  description_time[MAX_EVALS];
-    double  match_time[MAX_EVALS];
-    int     match_points[MAX_EVALS];
+    std::vector<double>  classify_time;
+    std::vector<double>  lidar_process_time;
+    std::vector<double>  detect_time;
+    std::vector<int>     detect_points;
+    std::vector<int>     detect_veh_points;
+    std::vector<double>  description_time;
+    std::vector<double>  match_time;
+    std::vector<int>     match_points;
 };
 
 

@@ -151,8 +151,75 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
     // ...
 }
 
+/**
+ * determine the bounding boxes with the maximum feature descriptor matches between the
+ * two frames.
+ * 
+ * @matches[input]
+ * @bbBestMatches[output]
+ * @prevFrame[input]
+ * @currFrame[input]
+ */
 
-void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
+void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, 
+    DataFrame &prevFrame, DataFrame &currFrame)
 {
-    // ...
+    multimap<int, int> kPMap;
+
+    // for every feature descriptor match, associate it to one or more 
+    // bounding boxes.
+    for (auto match : matches) {
+        // match argument order dictates association
+        // prevFrame -> queryIdx
+        // currFrame -> trainIdx
+        // DVMatch also contains the 'distance' metric - maybe relevant fo
+        // filtering 'matches'
+        auto prevKP = prevFrame.keypoints[match.queryIdx];
+        auto currKP = currFrame.keypoints[match.trainIdx];
+
+        vector<int> prevBB;
+        vector<int> currBB;
+
+        // build bb indexes
+        for (auto box : prevFrame.boundingBoxes) {
+            if (box.roi.contains(prevKP.pt)) {
+                prevBB.push_back(box.boxID);
+            }
+        }
+        for (auto box : currFrame.boundingBoxes) {
+            if (box.roi.contains(currKP.pt)) {
+                currBB.push_back(box.boxID);
+            }
+        }
+
+        for (int prevIndex : prevBB) {
+            for (int currIndex : currBB) {
+                kPMap.insert({prevIndex, currIndex});
+            }
+        }
+    }
+
+    // determine the best match for each previous -> current frame (max KPs)
+    for (auto box : prevFrame.boundingBoxes) {
+        int prevIdx = box.boxID;
+
+        map<int, int> counts;
+        auto brange = kPMap.equal_range(prevIdx);
+        for (auto it = brange.first; it != brange.second; it++) {
+            int prevIdx = it->second;
+            counts[prevIdx]++;
+        }
+
+        // for (const auto &count : counts) {
+        //     cout << "count[" << count.first << "] = " << count.second << endl;
+        // }
+        int maxCurrIdx = std::distance(counts.begin(),  
+            std::max_element(counts.begin(), counts.end(),
+                [](const pair<int, int> &p1, const pair<int, int> &p2) {
+                return p1.second < p2.second; 
+            }));
+
+        // cout << "maxCurrIdx: " << maxCurrIdx << endl;
+        bbBestMatches[prevIdx] = maxCurrIdx;
+    }
 }

@@ -8,11 +8,16 @@
             "name": "g++ build and debug active file",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/2D_feature_tracking",
+            "program": "${workspaceFolder}/build/3D_object_tracking",
             "args": [
-                "-b",
-                "-f",
-                "-v"
+                "-d",
+                "SHITOMASI",
+                "-m",
+                "MAT_BF",
+                "-x",
+                "ORB",
+                "-s",
+                "SEL_KNN"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
