@@ -207,7 +207,9 @@ int main(int argc, const char *argv[])
 
         // remove Lidar points based on distance properties (assumes level road surface).
         float minZ = -1.5, maxZ = -0.9, minX = 2.0, maxX = 20.0, maxY = 2.0, minR = 0.1; // focus on ego lane
+        // showLidarTopview(lidarPoints, cv::Size(10.0, 25.0), cv::Size(1000, 2000), true, bVis);
         cropLidarPoints(lidarPoints, minX, maxX, maxY, minZ, maxZ, minR);
+        // showLidarTopview(lidarPoints, cv::Size(10.0, 25.0), cv::Size(1000, 2000), true, bVis);
     
         (dataBuffer.end() - 1)->lidarPoints = lidarPoints;
         t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
@@ -360,6 +362,9 @@ int main(int argc, const char *argv[])
                     }
                 }
 
+                cout << "currBB[" << currBB->boxID << "] size = " << currBB->lidarPoints.size() <<  "   ";
+                cout << "prevBB[" << prevBB->boxID << "] size = " << prevBB->lidarPoints.size() << endl;
+
                 // compute TTC for current match
                 if( currBB->lidarPoints.size()>0 && prevBB->lidarPoints.size()>0 ) // only compute TTC if we have Lidar points
                 {
@@ -377,7 +382,7 @@ int main(int argc, const char *argv[])
                     computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
                     //// EOF STUDENT ASSIGNMENT
 
-                    if (bVis)
+                    if (true)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
                         showLidarImgOverlay(visImg, currBB->lidarPoints, P_rect_00, R_rect_00, RT, &visImg);

@@ -2,6 +2,7 @@
 #include <iostream>
 #include <algorithm>
 #include <numeric>
+#include <limits>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 
@@ -60,22 +61,30 @@ void clusterLidarWithROI(std::vector<BoundingBox> &boundingBoxes, std::vector<Li
     } // eof loop over all Lidar points
 }
 
-
+//
+// top down view of lidar points
+//
+// modified to show inliers vs outlier points.
+//
 void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, cv::Size imageSize, bool bWait)
 {
     // create topview image
     cv::Mat topviewImg(imageSize, CV_8UC3, cv::Scalar(255, 255, 255));
 
+    int inlierCnt = 0;
     for(auto it1=boundingBoxes.begin(); it1!=boundingBoxes.end(); ++it1)
     {
         // create randomized color for current 3D object
         cv::RNG rng(it1->boxID);
         cv::Scalar currColor = cv::Scalar(rng.uniform(0,150), rng.uniform(0, 150), rng.uniform(0, 150));
 
+        vector<bool> inliers = findInliers(it1->lidarPoints, 5, 2);
+
         // plot Lidar points into top view image
         int top=1e8, left=1e8, bottom=0.0, right=0.0; 
         float xwmin=1e8, ywmin=1e8, ywmax=-1e8;
-        for (auto it2 = it1->lidarPoints.begin(); it2 != it1->lidarPoints.end(); ++it2)
+        int idx = 0;
+        for (auto it2 = it1->lidarPoints.begin(); it2 != it1->lidarPoints.end(); ++it2, ++idx)
         {
             // world coordinates
             float xw = (*it2).x; // world position in m with x facing forward from sensor
@@ -95,7 +104,13 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
             right = right>x ? right : x;
 
             // draw individual point
-            cv::circle(topviewImg, cv::Point(x, y), 4, currColor, -1);
+            if (inliers[idx]) {
+                cv::circle(topviewImg, cv::Point(x, y), 4, currColor, -1);
+                inlierCnt++;
+            } else {
+                // outliers are read
+                cv::circle(topviewImg, cv::Point(x, y), 4, cv::Scalar(0, 0, 255), -1);
+            }
         }
 
         // draw enclosing rectangle
@@ -103,7 +118,7 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
 
         // augment object with some key data
         char str1[200], str2[200];
-        sprintf(str1, "id=%d, #pts=%d", it1->boxID, (int)it1->lidarPoints.size());
+        sprintf(str1, "id=%d, #pts=%d, #inliers=%d", it1->boxID, (int)it1->lidarPoints.size(), inlierCnt);
         putText(topviewImg, str1, cv::Point2f(left-250, bottom+50), cv::FONT_ITALIC, 2, currColor);
         sprintf(str2, "xmin=%2.2f m, yw=%2.2f m", xwmin, ywmax-ywmin);
         putText(topviewImg, str2, cv::Point2f(left-250, bottom+125), cv::FONT_ITALIC, 2, currColor);  
@@ -129,7 +144,6 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
     }
 }
 
-
 // associate a given bounding box with the keypoints it contains
 void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, std::vector<cv::DMatch> &kptMatches)
 {
@@ -144,11 +158,201 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     // ...
 }
 
+#include <pcl/common/common_headers.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/console/parse.h>
+
+// using namespace std::chrono::system_clock;
+
+void dbgViewData(std::vector<LidarPoint> &lidarPoints) {
+    pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer ("3D Viewer"));
+
+    // pcl::PointCloud<pcl::PointXYZI>::Ptr cloud;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud;
+
+    for (auto const &lpt: lidarPoints) {
+        pcl::PointXYZ pclpt(float(lpt.x), float(lpt.y), float(lpt.z));
+        // lpt.r;  -> reflectivity - need to check to see how translates to intensity
+        cloud->points.push_back(pclpt);        
+    }
+    cloud->width = (int) cloud->points.size();
+    cloud->height = 1;
+
+    string name("lidar data");
+    // Color color(1,1,0);
+    viewer->addPointCloud<pcl::PointXYZ> (cloud, name);
+  	viewer->setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, name);
+  	// viewer->setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_COLOR, color.r, color.g, color.b, name);
+    viewer->addCoordinateSystem (1.0);
+    viewer->initCameraParameters ();
+
+    while (!viewer->wasStopped ())
+    {
+        viewer->spinOnce (100);
+        // std::this_thread::sleep_for(100ms);
+    }
+}
+
+#if 0
+
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+
+void trimOutliers(std::vector<LidarPoint> &points) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
+
+    // Fill in the cloud data
+    for (auto const &pt : points) {
+        cloud->points.push_back(pcl::PointXYZ(pt.x, pt.y, pt.z));
+    }
+  	cloud->width = cloud->points.size();
+  	cloud->height = 1;
+
+    cout << "points before filtering: " << cloud->points.size() << endl;
+
+    // Create the filtering object
+    pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+    sor.setInputCloud(cloud);
+    sor.setMeanK(50);
+    sor.setStddevMulThresh(1.0);
+    sor.filter(*cloud_filtered);
+
+    cout << "points after filtering: " << cloud_filtered->points.size() << endl;
+}
+
+#endif 
+
+#include <opencv2/flann/miniflann.hpp>
+
+/*
+ * algorithm derived from:  
+ * 
+ *     https://stats.stackexchange.com/questions/288669/the-algorithm-behind-pclstatisticaloutlierremoval
+ * 
+ */
+std::vector<bool> findInliers(const std::vector<LidarPoint> &lpoints, int nn, double std_mult) {
+    int size = lpoints.size();
+    std::vector<bool> inliers(size);
+    std::vector<double> dist(size);
+
+    // compute the mean and standard deviation of the distances from each point in the cloud
+    // to their 'nn' nearest neighbors.
+#if 1
+    for (int idx = 0; idx < size; idx++) {
+        const LidarPoint &lp = lpoints[idx];
+
+        inliers[idx] = true;   // all points are 'inliers' unless rejected
+
+        std::vector<double> l2dist(size);
+        for (int idx2 = 0; idx2 < size; idx2++)  {
+            if (idx == idx2) {
+                l2dist[idx2] = 0.0;
+            } else {
+                const LidarPoint &l2 = lpoints[idx2];   
+                // l2dist[idx2] = sqrt(
+                //     ((lp.x - l2.x)*(lp.x - l2.x)) +
+                //     ((lp.y - l2.y)*(lp.y - l2.y)) +
+                //     ((lp.z - l2.z)*(lp.z - l2.z))
+                // );         
+                // ignore z-dimension       
+                l2dist[idx2] = sqrt(
+                    ((lp.x - l2.x)*(lp.x - l2.x)) +
+                    ((lp.y - l2.y)*(lp.y - l2.y))
+                );
+            }
+        }
+
+        sort(l2dist.begin(), l2dist.end());
+        dist[idx] = 0.0;
+
+        // start index at 1 to skip distance to self
+        for (int idx2 = 1; idx2 < nn + 1; idx2++) {
+            dist[idx] += l2dist[idx2];
+        }
+        dist[idx] /= nn;
+    }
+#else
+    std::vector<cv::Point3f> cpts(size);
+    cv::Mat query_pt(1, 3, CV_32FC1);    
+    std::vector<int> indices(nn + 1);
+    std::vector<float> distances(nn + 1);
+
+    for (auto const &lpt : lpoints) {
+        // pts.push_back(cv::Point3f(lpt.x, lpt.y, 0));  //  maybe normalize height?
+        cpts.push_back(cv::Point3f(lpt.x, lpt.y, lpt.z));
+    }
+
+    cv::flann::Index kd_tree(cv::Mat(cpts).reshape(1), cv::flann::KDTreeIndexParams(), cvflann::FLANN_DIST_L2);
+    for (int i = 0; i < cpts.size(); i++) {
+        inliers[i] = true;
+
+        query_pt.at<float>(0) = cpts[i].x;
+        query_pt.at<float>(1) = cpts[i].y;
+        query_pt.at<float>(2) = cpts[i].z;
+
+        // indices returns the indices of the nearest neighbors
+        // distances returns squared euclidean distances
+        kd_tree.knnSearch(query_pt, indices, distances, nn + 1, cv::flann::SearchParams(32));
+
+        dist1[i] = 0.0;
+        for (int j = 1; j < nn + 1; j++) {
+            dist[i] += sqrt(distances[j]);
+        }
+        dist[i] /= nn;
+    }
+#endif
+
+    // mark the points in the cloud (pt) in whch the mean distance is greater than the threshold
+    // threshold => pt.mean + std_mult*pt.sigma
+    double mean = accumulate(dist.begin(), dist.end(), 0.0)/size;
+    double std_dev =  accumulate(dist.begin(), dist.end(), 0.0, 
+        [=](double accumulator, const double val) -> double {
+            return accumulator + ((val - mean)*(val - mean)/(size - 1));
+        });
+    double threshold = mean + std_mult*std_dev;
+
+    for (int idx = 0; idx < size; idx++) {
+        inliers[idx] = dist[idx] < threshold;
+    }
+
+    int icnt = count_if(inliers.begin(), inliers.end(), [=](int i)-> bool { return inliers[i]; });
+    cout << "LidarPoints: [" << icnt << "] of [" << size << "] points are inliers." << endl;
+
+    return inliers;
+}
 
 void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
                      std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC)
 {
-    // ...
+    double delta_t = 1.0/frameRate;
+
+    vector<bool> prevInliers = findInliers(lidarPointsPrev, 5, 2);
+    vector<bool> currInliers = findInliers(lidarPointsCurr, 5, 2);
+
+    double prev_est(0.0), curr_est(0.0);
+    int inlier_cnt = 0;
+    for (int idx = 0; idx < lidarPointsPrev.size(); idx++) {
+        if (prevInliers[idx]) {
+            prev_est += lidarPointsPrev[idx].x;
+            inlier_cnt++;
+        }
+    }
+    prev_est /= inlier_cnt;
+
+    inlier_cnt = 0;
+    for (int idx = 0; idx < lidarPointsCurr.size(); idx++) {
+        if (currInliers[idx]) {
+            curr_est += lidarPointsCurr[idx].x;
+            inlier_cnt++;
+        }
+    }
+    curr_est /= inlier_cnt;
+    double delta_x = fabs(curr_est - prev_est);
+    TTC = curr_est*(delta_t/max(delta_x, std::numeric_limits<double>::min()));
 }
 
 /**
@@ -206,8 +410,7 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
         map<int, int> counts;
         auto brange = kPMap.equal_range(prevIdx);
         for (auto it = brange.first; it != brange.second; it++) {
-            int prevIdx = it->second;
-            counts[prevIdx]++;
+            counts[it->second]++;
         }
 
         // for (const auto &count : counts) {
@@ -220,6 +423,6 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
             }));
 
         // cout << "maxCurrIdx: " << maxCurrIdx << endl;
-        bbBestMatches[prevIdx] = maxCurrIdx;
+        bbBestMatches.insert({prevIdx, maxCurrIdx});
     }
 }
