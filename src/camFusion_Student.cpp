@@ -78,7 +78,7 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
         cv::RNG rng(it1->boxID);
         cv::Scalar currColor = cv::Scalar(rng.uniform(0,150), rng.uniform(0, 150), rng.uniform(0, 150));
 
-        vector<bool> inliers = findInliers(it1->lidarPoints, 5, 2);
+        vector<bool> inliers = findInliers(it1->lidarPoints, 5, 1);
 
         // plot Lidar points into top view image
         int top=1e8, left=1e8, bottom=0.0, right=0.0; 
@@ -144,10 +144,72 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
     }
 }
 
-// associate a given bounding box with the keypoints it contains
-void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, std::vector<cv::DMatch> &kptMatches)
+// associate a given bounding box with the keypoints it contains.
+//
+// quality matching here minimizes computation/error of TTC estimation.
+//
+void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
+    std::vector<cv::DMatch> &kptMatches)
 {
-    // ...
+    std::vector<cv::DMatch> kpts_roi;
+
+    // superset of keypoints is those in the current frame.
+    for (auto const &match : kptMatches) {
+        // match argument order dictates association
+        // prevFrame -> queryIdx
+        // currFrame -> trainIdx
+        if (boundingBox.roi.contains(kptsCurr[match.trainIdx].pt)) {
+            kpts_roi.push_back(match);
+        }
+    }
+
+    //
+    // the following filters on distance metric.  might filter on change in x/y distance.
+    // int size = kpts_roi.size();
+    // double mean = accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0,
+    //     [](double sum, const cv::DMatch &m) -> double { return sum + m.distance; });       
+    // mean /= size;
+    // double var =  accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0, 
+    //     [mean,size](double accumulator, const cv::DMatch &m) -> double {
+    //         return accumulator + ((m.distance - mean)*(m.distance - mean)/(size - 1));
+    //     });
+    // double std_dev = sqrt(var);
+    // cout << "clusterKptMatchesWithROI.  mean = " << mean << ", stddev = "<< std_dev;
+    // constexpr double std_mult = 0.5;
+    // double threshold = mean + std_mult*std_dev;    
+    // for (auto const &match : kpts_roi) {
+    //     if (match.distance < threshold) {
+    //         boundingBox.kptMatches.push_back(match);
+    //     }
+    // }
+
+    int size = kpts_roi.size();
+    double mean = accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0,
+        [=](double meansum, const cv::DMatch &m) -> double {
+            meansum += cv::norm(kptsCurr[m.trainIdx].pt - kptsPrev[m.queryIdx].pt);
+        });
+    mean /= size;
+
+    double var =  accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0, 
+        [=](double varsum, const cv::DMatch &m) -> double {
+            auto dist = cv::norm(kptsCurr[m.trainIdx].pt - kptsPrev[m.queryIdx].pt);
+            return varsum + ((dist - mean)*(dist - mean)/(size - 1));
+        });
+    double std_dev = sqrt(var);
+
+    // define min and max threshold to remove matches that probably represent outliers
+    constexpr double std_mult = 1.0;
+    double min_thr = max(0.0, mean - std_mult*std_dev);
+    double max_thr = mean + std_mult*std_dev;      
+
+    for (auto const &match : kpts_roi) {
+        auto dist = cv::norm(kptsCurr[match.trainIdx].pt - kptsPrev[match.queryIdx].pt);
+        if (min_thr < dist && dist < max_thr) {
+            boundingBox.kptMatches.push_back(match);
+        }
+    }
+
+    cout << "clusterKptMatchesWithROI.  num kptsMatches = " << kptMatches.size() << ", num boundingBox.kptMatches = " << boundingBox.kptMatches.size() << endl;
 }
 
 
@@ -155,7 +217,7 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
                       std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
 {
-    // ...
+
 }
 
 #include <pcl/common/common_headers.h>
@@ -253,11 +315,6 @@ std::vector<bool> findInliers(const std::vector<LidarPoint> &lpoints, int nn, do
                 l2dist[idx2] = 0.0;
             } else {
                 const LidarPoint &l2 = lpoints[idx2];   
-                // l2dist[idx2] = sqrt(
-                //     ((lp.x - l2.x)*(lp.x - l2.x)) +
-                //     ((lp.y - l2.y)*(lp.y - l2.y)) +
-                //     ((lp.z - l2.z)*(lp.z - l2.z))
-                // );         
                 // ignore z-dimension       
                 l2dist[idx2] = sqrt(
                     ((lp.x - l2.x)*(lp.x - l2.x)) +
@@ -309,14 +366,15 @@ std::vector<bool> findInliers(const std::vector<LidarPoint> &lpoints, int nn, do
     // mark the points in the cloud (pt) in whch the mean distance is greater than the threshold
     // threshold => pt.mean + std_mult*pt.sigma
     double mean = accumulate(dist.begin(), dist.end(), 0.0)/size;
-    double std_dev =  accumulate(dist.begin(), dist.end(), 0.0, 
-        [=](double accumulator, const double val) -> double {
+    double var =  accumulate(dist.begin(), dist.end(), 0.0, 
+        [mean,size](double accumulator, const double val) -> double {
             return accumulator + ((val - mean)*(val - mean)/(size - 1));
         });
+    double std_dev = sqrt(var);
     double threshold = mean + std_mult*std_dev;
 
     for (int idx = 0; idx < size; idx++) {
-        inliers[idx] = dist[idx] < threshold;
+        inliers[idx] = (dist[idx] < threshold);
     }
 
     int icnt = count_if(inliers.begin(), inliers.end(), [=](int i)-> bool { return inliers[i]; });
@@ -336,7 +394,7 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
     double prev_est(0.0), curr_est(0.0);
     int inlier_cnt = 0;
     for (int idx = 0; idx < lidarPointsPrev.size(); idx++) {
-        if (prevInliers[idx]) {
+        if (prevInliers[idx]) {                
             prev_est += lidarPointsPrev[idx].x;
             inlier_cnt++;
         }
@@ -378,27 +436,27 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
         // currFrame -> trainIdx
         // DVMatch also contains the 'distance' metric - maybe relevant fo
         // filtering 'matches'
-        auto prevKP = prevFrame.keypoints[match.queryIdx];
-        auto currKP = currFrame.keypoints[match.trainIdx];
+        auto prevKP = prevFrame.keypoints[match.queryIdx].pt;
+        auto currKP = currFrame.keypoints[match.trainIdx].pt;
 
         vector<int> prevBB;
         vector<int> currBB;
 
         // build bb indexes
         for (auto box : prevFrame.boundingBoxes) {
-            if (box.roi.contains(prevKP.pt)) {
+            if (box.roi.contains(prevKP)) {
                 prevBB.push_back(box.boxID);
             }
         }
         for (auto box : currFrame.boundingBoxes) {
-            if (box.roi.contains(currKP.pt)) {
+            if (box.roi.contains(currKP)) {
                 currBB.push_back(box.boxID);
             }
         }
 
-        for (int prevIndex : prevBB) {
-            for (int currIndex : currBB) {
-                kPMap.insert({prevIndex, currIndex});
+        for (int prevBBIndex : prevBB) {
+            for (int currBBIndex : currBB) {
+                kPMap.insert({prevBBIndex, currBBIndex});
             }
         }
     }
@@ -406,23 +464,25 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
     // determine the best match for each previous -> current frame (max KPs)
     for (auto box : prevFrame.boundingBoxes) {
         int prevIdx = box.boxID;
+//        cout << "matchBoundingBoxes. boxID { " << prevIdx << "} "; 
 
         map<int, int> counts;
         auto brange = kPMap.equal_range(prevIdx);
         for (auto it = brange.first; it != brange.second; it++) {
             counts[it->second]++;
         }
+        cout << endl;
 
         // for (const auto &count : counts) {
         //     cout << "count[" << count.first << "] = " << count.second << endl;
         // }
-        int maxCurrIdx = std::distance(counts.begin(),  
-            std::max_element(counts.begin(), counts.end(),
+        map<int, int>::iterator best = std::max_element(counts.begin(), counts.end(),
                 [](const pair<int, int> &p1, const pair<int, int> &p2) {
                 return p1.second < p2.second; 
-            }));
+            });
+        int maxCurrIdx = best->first;
 
-        // cout << "maxCurrIdx: " << maxCurrIdx << endl;
+//        cout << "maxCurrIdx: " << maxCurrIdx << endl;
         bbBestMatches.insert({prevIdx, maxCurrIdx});
     }
 }
