@@ -153,7 +153,7 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 {
     std::vector<cv::DMatch> kpts_roi;
 
-    // superset of keypoints is those in the current frame.
+    // superset of keypoints are those in the current frame (not sure if matters in prev frame or not).
     for (auto const &match : kptMatches) {
         // match argument order dictates association
         // prevFrame -> queryIdx
@@ -163,26 +163,10 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
         }
     }
 
+    // the following filters out keypoints that move too much or too little - which may
+    // be more likely to be failures with keypoint matching.
     //
-    // the following filters on distance metric.  might filter on change in x/y distance.
-    // int size = kpts_roi.size();
-    // double mean = accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0,
-    //     [](double sum, const cv::DMatch &m) -> double { return sum + m.distance; });       
-    // mean /= size;
-    // double var =  accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0, 
-    //     [mean,size](double accumulator, const cv::DMatch &m) -> double {
-    //         return accumulator + ((m.distance - mean)*(m.distance - mean)/(size - 1));
-    //     });
-    // double std_dev = sqrt(var);
-    // cout << "clusterKptMatchesWithROI.  mean = " << mean << ", stddev = "<< std_dev;
-    // constexpr double std_mult = 0.5;
-    // double threshold = mean + std_mult*std_dev;    
-    // for (auto const &match : kpts_roi) {
-    //     if (match.distance < threshold) {
-    //         boundingBox.kptMatches.push_back(match);
-    //     }
-    // }
-
+    // not enough testing to prove one way or the other.
     int size = kpts_roi.size();
     double mean = accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0,
         [=](double meansum, const cv::DMatch &m) -> double {
@@ -209,7 +193,7 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
         }
     }
 
-    cout << "clusterKptMatchesWithROI.  num kptsMatches = " << kptMatches.size() << ", num boundingBox.kptMatches = " << boundingBox.kptMatches.size() << endl;
+    cout << "clusterKptMatchesWithROI.  num kpt candidates in bbox = " << kpts_roi.size() << ", after filtering = " << boundingBox.kptMatches.size() << endl;
 }
 
 
@@ -217,7 +201,45 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
                       std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
 {
+    // Lesson 3 - Estimating TTC with a mono camera
+    vector<double> distRatios;
+    for (auto it1 = kptMatches.begin(); it1 != kptMatches.end() - 1; ++it1) {
+        cv::KeyPoint kpOuterCurr = kptsCurr.at(it1->trainIdx);  
+        cv::KeyPoint kpOuterPrev = kptsPrev.at(it1->queryIdx);  
 
+        for (auto it2 = kptMatches.begin() + 1; it2 != kptMatches.end(); ++it2) {
+            double minDist = 100.0;   // minimum distances between keypoints to enable quality estimates
+
+            // get next keypoint and its matched partner in the prev. frame
+            cv::KeyPoint kpInnerCurr = kptsCurr.at(it2->trainIdx);  
+            cv::KeyPoint kpInnerPrev = kptsPrev.at(it2->queryIdx);  
+
+            // compute distances and distance ratios
+            double distCurr = cv::norm(kpOuterCurr.pt - kpInnerCurr.pt);
+            double distPrev = cv::norm(kpOuterPrev.pt - kpInnerPrev.pt);
+
+            // avoid division by zero (same point) and apply the minimum threshold
+            if (distPrev > std::numeric_limits<double>::epsilon() && distCurr >= minDist) {
+                double distRatio = distCurr / distPrev;
+                distRatios.push_back(distRatio);
+            }
+        }
+    }
+
+    if (distRatios.size() == 0)
+    {
+        TTC = NAN;
+        return;
+    }
+
+    // use the median of the distance ratios to negate effects of outliers
+    sort(distRatios.begin(), distRatios.end());
+    int medIndex = floor(distRatios.size()/2);
+    double medianDistRatio = (distRatios.size() % 2 == 0) ? 0.5*(distRatios[medIndex - 1] + distRatios[medIndex]) : distRatios[medIndex];
+
+    // Finally, calculate a TTC estimate based on these 2D camera features
+    double delta_t = 1.0/frameRate;
+    TTC = -delta_t/(1.0 - medianDistRatio);
 }
 
 #include <pcl/common/common_headers.h>

@@ -24,11 +24,11 @@
 
 using namespace std;
 
-    // -d <DET_TYPE> -m <MAT_TYPE> -s <SEL_TYP> [-v[isible]] [-f[ocusOnVehicle]] [-l[imitKpts]]
-    // DET_TYPE:  SHITOMASI, HARRIS, FAST, BRISK, ORB, AKAZE, SIFT
-    // MAT_TYPE:  MAT_BF, MAT_FLANN
-    // DES_TYPE:  BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
-    // SEL_TYPE:  SEL_NN, SEL_KNN
+// -d <DET_TYPE> -m <MAT_TYPE> -s <SEL_TYP> [-v[isible]] [-f[ocusOnVehicle]] [-l[imitKpts]]
+// DET_TYPE:  SHITOMASI, HARRIS, FAST, BRISK, ORB, AKAZE, SIFT
+// MAT_TYPE:  MAT_BF, MAT_FLANN
+// DES_TYPE:  BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+// SEL_TYPE:  SEL_NN, SEL_KNN
 
 void usage(const char *progname) {
     cout << "usage: " << endl;
@@ -45,11 +45,11 @@ void usage(const char *progname) {
     cout << "SELECTOR_TYPE:  SEL_NN, SEL_KNN" << endl;
     cout << "";
     cout << "Example:" << endl;
-    cout << "  ./2D_feature_tracking -d SHITOMASI -m MAT_BF -x BRISK -s SEL_NN" << endl;
+    cout << "  ./3D_object_tracking -d SHITOMASI -m MAT_BF -x BRISK -s SEL_NN" << endl;
 }
 
 /* MAIN PROGRAM */
-int main(int argc, const char *argv[])
+eval_summary _main(int argc, const char *argv[])
 {
     /* INIT VARIABLES AND DATA STRUCTURES */
     string detectorType = "";    // SHITOMASI, HARRIS, FAST, BRISK, ORB, FREAK, AKAZE, SIFT
@@ -382,7 +382,9 @@ int main(int argc, const char *argv[])
                     computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
                     //// EOF STUDENT ASSIGNMENT
 
-                    if (true)
+                    assert(!isnan(ttcCamera));
+
+                    if (bVis)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
                         showLidarImgOverlay(visImg, currBB->lidarPoints, P_rect_00, R_rect_00, RT, &visImg);
@@ -400,10 +402,204 @@ int main(int argc, const char *argv[])
                     }
                 } // eof TTC computation
             } // eof loop over all BB matches            
-
         }
-
     } // eof loop over all images
+
+    return summary;
+}
+
+
+template <typename T>
+tuple<double, double> do_stats(const std::vector<T> data) {
+    double sum = std::accumulate(std::begin(data), std::end(data), 0.0);
+    double mean =  sum/data.size();
+
+    double accum = 0.0;
+    std::for_each (std::begin(data), std::end(data), [&](const T d) {
+        accum += (d - mean)* (d - mean);
+    });
+
+    double stdev = sqrt(accum/(data.size()-1));
+    return std::make_tuple(mean, stdev);
+}
+
+#if 0
+void task7(ofstream &fout, vector<eval_summary> &summaries) {
+    fout << "detector,img1,img2,img3,img4,img5,img6,img7,img8,img9,img10,avg_pts,stddev_pts" << endl;
+    for (auto &eval : summaries) {
+        // double avg_detect_time_ms = accumulate(eval.detect_time + 1, eval.detect_time + MAX_EVALS, 0.0)*1000/div;
+        double avg_detect_points, stddev_detect_points;
+        tie(avg_detect_points, stddev_detect_points) = do_stats(std::vector<int>(eval.detect_veh_points, eval.detect_veh_points + MAX_EVALS));
+        fout << eval.detector_type << ", ";
+        for (int i = 0; i < MAX_EVALS; i++) {
+            fout << eval.detect_veh_points[i] << ", ";
+        }
+        fout << avg_detect_points << ", " << stddev_detect_points << endl;
+    }
+}
+
+void task8(ofstream &fout, vector<eval_summary> &summaries) {
+    fout << "detector,descriptor,img1-2,img2-3,img3-4,img4-5,img5-6,img6-7,img7-8,img8-9,img9-10" << endl;
+    for (auto &eval : summaries) {
+        // double avg_detect_time_ms = accumulate(eval.detect_time + 1, eval.detect_time + MAX_EVALS, 0.0)*1000/div;
+        double avg_detect_points, stddev_detect_points;
+        tie(avg_detect_points, stddev_detect_points) = do_stats(std::vector<int>(eval.detect_veh_points, eval.detect_veh_points + MAX_EVALS));
+        fout << eval.detector_type << ", " << eval.descriptor_type;
+        for (int i = 1; i < MAX_EVALS; i++) {
+            fout << ", " << eval.match_points[i];
+        }
+        fout << endl;
+    }
+}
+
+#endif
+
+int batch_main(int argc, const char *argv[]) {
+    vector<string> detectors =  { "SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE", "SIFT" };
+    // vector<string> detectors =  { "SIFT" };
+    // vector<string> matchers =  { "MAT_BF", "MAT_FLANN" };
+    vector<string> matchers =  { "MAT_BF" };
+    // SIFT with ORB results in OOM exceptions
+    // vector<string> descriptors =  { "BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT" };
+    vector<string> descriptors =  { "BRISK" };
+    // vector<string> selectors =  { "SEL_NN", "SEL_KNN" };
+    vector<string> selectors =  { "SEL_KNN" };
+
+    bool focusOnVehicle = false;
+    bool limitKpts = false;
+    bool visualize = false;
+    for (int i = 0; i < argc; i++) {
+        if (strncmp(argv[i], "-f", 2) == 0) {
+            focusOnVehicle = true;
+        }
+        if (strncmp(argv[i], "-l", 2) == 0) {
+            limitKpts = true;
+        }
+        if (strncmp(argv[i], "-v", 2) == 0) {
+            visualize = true;
+        }
+    }
+
+    const char *args[12];  // required + three optional flags
+    args[0] = argv[0];
+    args[1] = "-d";
+    args[3] = "-x";
+    args[5] = "-m";
+    args[7] = "-s";
+
+    vector<eval_summary> summaries;
+
+    int min_args = 9;   // base number of args
+    for (auto det : detectors) {
+        for (auto des : descriptors) {
+            if (det == "SIFT" && des == "ORB") {
+                // getting OOM erors here...  not resolved.
+                continue;
+            }
+            for (auto mat: matchers) {
+                for (auto sel: selectors) {
+                    int ac = min_args;
+                    args[2] = det.c_str();
+                    args[4] = des.c_str();
+                    args[6] = mat.c_str();
+                    args[8] = sel.c_str();
+            
+                    // put any options back in to batch flow
+                    if (focusOnVehicle) {
+                        args[ac++] =  "-f";
+                    }
+                    if (limitKpts) {
+                        args[ac++] = "-l";
+                    }
+                    if (visualize) {
+                        args[ac++] = "-v";
+                    }
+                    summaries.push_back(_main(ac, args));
+                }
+            }
+        }
+    }
+    // double  detect_time[MAX_EVALS];
+    // int     detect_points[MAX_EVALS];
+    // int     detect_veh_points[MAX_EVALS];
+    // double  description_time[MAX_EVALS];
+    // double  match_time[MAX_EVALS];
+    // int     match_points[MAX_EVALS];
+
+    // focusOnVehicle
+    // limitKeypoints
+
+    string foutname("stats.csv");
+    ofstream fout(foutname, ios::out);
+
+    if (false) {
+        // task7(fout, summaries);
+        // task8(fout, summaries);
+    } else {
+        fout << "detector, descriptor, matcher, selector, det[ms], num_keypoints, desc[ms], match[ms], num_matchpts, det_err, des_err, mat_err" << endl;
+        for (auto &eval : summaries) {
+            double avg_detect_time_ms, std_detect_time_ms;
+            tie(avg_detect_time_ms, std_detect_time_ms) = do_stats(std::vector<double>(eval.detect_time.begin() + 1, eval.detect_time.end()));
+            double avg_description_time_ms = accumulate(eval.description_time.begin() + 1, eval.description_time.end(), 0.0)*1000/(eval.description_time.size() - 1);
+            double avg_match_time_ms = accumulate(eval.match_time.begin() + 1, eval.match_time.end(), 0.0)*1000/(eval.match_time.size() - 1);
+            int avg_detect_pts;
+            if (focusOnVehicle) {
+                avg_detect_pts = accumulate(eval.detect_veh_points.begin() + 1, eval.detect_veh_points.end(), 0)/(eval.detect_veh_points.size() - 1);
+            } else {
+                avg_detect_pts = accumulate(eval.detect_points.begin() + 1, eval.detect_points.end(), 0)/(eval.detect_points.size() - 1);
+            }     
+            int avg_match_pts = accumulate(eval.match_points.begin() + 1, eval.match_points.end(), 0)/(eval.match_points.size() - 1);
+
+            cout << eval.detector_type << "," << eval.descriptor_type << ",";
+            cout << eval.matcher_type << "," << eval.selector_type << ",";
+            cout << " avg_det: " << avg_detect_time_ms << "[ms],";
+            cout << " avg_kpts: " << avg_detect_pts << "[pts],";
+            cout << " avg_des: " << avg_description_time_ms << "[ms],";
+            cout << " avg_mat_pts: " << avg_match_pts << "[pts],";
+            cout << " avg_mat: " << avg_match_time_ms << "[ms]";
+            cout << " det_err: " << eval.det_err_cnt << ", des_err: " << eval.des_err_cnt << ", mat_err: " << eval.mat_err_cnt;
+            cout << endl;
+            fout << eval.detector_type << ", " << eval.descriptor_type << ", ";
+            fout << eval.matcher_type << ", " << eval.selector_type << ", ";
+            fout << avg_detect_time_ms << ", " << avg_detect_pts << ", ";
+            fout << avg_description_time_ms << ", ";
+            fout << avg_match_time_ms << ", " << avg_match_pts << ", ";
+            fout << eval.det_err_cnt << ", " << eval.des_err_cnt << ", " << eval.mat_err_cnt;
+            fout << endl;
+        }
+    }
+    fout.close();
+
+    cout << "Summary written to: " << foutname << endl;
+}
+
+int main(int argc, const char *argv[]) {
+    bool is_batch = false;
+    // scan for -b
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "-b") == 0) {
+            is_batch = true;
+            break;
+        }
+    }
+
+    if (is_batch) {
+        batch_main(argc, argv);
+    } else {
+        eval_summary summary = _main(argc, argv);  
+        cout << "Summary:" << endl;
+        cout << " Detector Type: " << summary.detector_type << endl;
+        cout << " Matcher Type: " << summary.matcher_type << endl;
+        cout << " Descriptor Type: " << summary.descriptor_type << endl;
+        cout << " Selector Type: " << summary.selector_type << endl;
+
+        for (int i = 1; i < summary.detect_time.size(); i++) {
+            cout << "detect_time: " << summary.detect_time[i]*1000 << "[ms] points: " << summary.detect_points[i] << " ";
+            cout << "match_time: " << summary.match_time[i]*1000 << "[ms] points: " << summary.match_points[i] << endl;
+        }
+        cout << "avg total detect time: " << accumulate(summary.detect_time.begin() + 1, summary.detect_time.end(), 0.0)*1000/(summary.detect_time.size() - 1) << "[ms]" << endl;
+        cout << "avg total match time: " << accumulate(summary.match_time.begin() + 1, summary.match_time.end(), 0.0)*1000/(summary.match_time.size() - 1) << "[ms]" << endl;
+    }
 
     return 0;
 }
