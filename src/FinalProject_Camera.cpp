@@ -33,16 +33,19 @@ using namespace std;
 void usage(const char *progname) {
     cout << "usage: " << endl;
     cout << progname << " -d <DETECTOR_TYPE> -m <MATCHER_TYPE> -x <DESCRIPTOR_TYPE> -s <SELECTOR_TYPE> \\" << endl;
-    cout << "    [-v] [-f] [-l]" << endl;
-    cout << "-v: visualize results" << endl;
-    cout << "-f: focus on vehicle rectangle" << endl;
-    cout << "-l: limit keypts" << endl;    
-    cout << "-b: run compiled in batch tests (output stats.csv) ";
+    cout << "    [-v] [-o1] [-o2]" << endl;
+    cout << " " << endl;
+    cout << "where required argument types are:" << endl;
+    cout << "  DETECTOR_TYPE:  SHITOMASI, HARRIS, FAST, BRISK, ORB, AKAZE, SIFT" << endl;
+    cout << "  MATCHER_TYPE:  MAT_BF, MAT_FLANN" << endl;
+    cout << "  DESCRIPTOR_TYPE: BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT" << endl;
+    cout << "  SELECTOR_TYPE:  SEL_NN, SEL_KNN" << endl;
+    cout << "optional arguments:" << endl;
+    cout << "  -v: visualize results" << endl;
+    cout << "  -o1: remove bounding box outliers" << endl;
+    cout << "  -o2: remove keypoint outliers" << endl;
+    cout << "  -b: run compiled in batch tests (output stats.csv) ";
     cout << "" << endl;
-    cout << "DETECTOR_TYPE:  SHITOMASI, HARRIS, FAST, BRISK, ORB, AKAZE, SIFT" << endl;
-    cout << "MATCHER_TYPE:  MAT_BF, MAT_FLANN" << endl;
-    cout << "DESCRIPTOR_TYPE: BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT" << endl;
-    cout << "SELECTOR_TYPE:  SEL_NN, SEL_KNN" << endl;
     cout << "";
     cout << "Example:" << endl;
     cout << "  ./3D_object_tracking -d SHITOMASI -m MAT_BF -x BRISK -s SEL_NN" << endl;
@@ -58,9 +61,10 @@ eval_summary _main(int argc, const char *argv[])
     string selectorType = "";    // SEL_NN, SEL_KNN
 
     bool bVis = false;            // visualize results
-    bool bFocusOnVehicle = false;
-    bool bLimitKpts = false;
+    bool bRemoveBBOutliers = false;
+    bool bRemoveKptOutliers = false;
 
+    cout << "Options Summary: " << endl;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-d") == 0) {
             detectorType = argv[++i];
@@ -76,13 +80,13 @@ eval_summary _main(int argc, const char *argv[])
             cout << "SelectorType: " << selectorType << endl;
         } else if (strncmp(argv[i], "-v", 2) == 0) {
             bVis = true;
-            printf("\bvisualize: %d", bVis);
-        } else if (strncmp(argv[i], "-f", 2) == 0) {
-            bFocusOnVehicle = true;
-            printf("\bfocusOnVehicle: %d", bFocusOnVehicle);   
-        } else if (strncmp(argv[i], "-l", 2) == 0) {
-            bLimitKpts = true;
-            printf("\blimitKpts: %d", bLimitKpts);         
+            cout << "visualize: " << bVis << endl;
+        } else if (strncmp(argv[i], "-o1", 3) == 0) {
+            bRemoveBBOutliers = true;
+            cout << "Remove BB Outliers: " << bRemoveBBOutliers << endl;   
+        } else if (strncmp(argv[i], "-o2", 3) == 0) {
+            bRemoveKptOutliers = true;
+            cout << "Remove Kpt Outliers: " << bRemoveKptOutliers << endl;         
         } else {
             cout << "unexpected argument found: " << argv[i] << endl;
             exit(-1);
@@ -102,6 +106,8 @@ eval_summary _main(int argc, const char *argv[])
     summary.matcher_type = matcherType;
     summary.descriptor_type = descriptorType;
     summary.selector_type = selectorType;
+    summary.remove_bb_outliers = bRemoveBBOutliers;
+    summary.remove_kpt_outliers = bRemoveKptOutliers;
     summary.det_err_cnt = 0;
     summary.des_err_cnt = 0;
     summary.mat_err_cnt = 0;
@@ -156,16 +162,21 @@ eval_summary _main(int argc, const char *argv[])
 
     /* MAIN LOOP OVER ALL IMAGES */
     double t;
+    double current_time = 0.0;
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
     {
+        double total_processing_time = (double)cv::getTickCount();
+ 
         /* LOAD IMAGE INTO BUFFER */
+
+        cout << "PROCESSING IMAGE #" << imgIndex << endl;
 
         // assemble filenames for current index
         ostringstream imgNumber;
         imgNumber << setfill('0') << setw(imgFillWidth) << imgStartIndex + imgIndex;
         string imgFullFilename = imgBasePath + imgPrefix + imgNumber.str() + imgFileType;
 
-        cout << "#0 : LOAD IMAGE INTO BUFFER..." << endl;
+        cout << "  Step #0  : LOAD IMAGE INTO BUFFER..." << endl;
         // load image from file 
         t = (double)cv::getTickCount();
         cv::Mat img = cv::imread(imgFullFilename);
@@ -176,22 +187,22 @@ eval_summary _main(int argc, const char *argv[])
         frame.cameraImg = img;
         dataBuffer.push_back(frame);
 
-        cout << "#1 : LOAD IMAGE INTO BUFFER.  done in " << t*1000 << "[ms]" << endl;
+        cout << "  Step #1  : LOAD IMAGE INTO BUFFER.  done in " << t*1000 << "[ms]" << endl;
 
         /* DETECT & CLASSIFY OBJECTS */
 
         float confThreshold = 0.2;
         float nmsThreshold = 0.4;        
-        cout << "#2 : DETECT & CLASSIFY OBJECTS..." << endl;
+        cout << "  Step #2  : DETECT & CLASSIFY OBJECTS..." << endl;
         try {
             t = (double)cv::getTickCount();
             detectObjects((dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->boundingBoxes, confThreshold, nmsThreshold,
                         yoloBasePath, yoloClassesFile, yoloModelConfiguration, yoloModelWeights, bVis);
             t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
             summary.classify_time.push_back(t);
-            cout << "#2 : DETECT & CLASSIFY OBJECTS.  done in " << t*1000 << "[ms]" << endl;
+            // cout << "      done in " << t*1000 << "[ms]" << endl;
         } catch (exception &e) {
-            cerr << "#2 : DETECT & CLASSIFY OBJECTS. Exception occurred: " << e.what() << endl;
+            cerr << "        Exception occurred: " << e.what() << endl;
             continue;
         }
 
@@ -200,7 +211,7 @@ eval_summary _main(int argc, const char *argv[])
         // load 3D Lidar points from file
 
         string lidarFullFilename = imgBasePath + lidarPrefix + imgNumber.str() + lidarFileType;
-        cout << "#3 : LOAD AND CROP LIDAR POINTS..." << endl;
+        cout << "  Step #3  : LOAD AND CROP LIDAR POINTS..." << endl;
         t = (double)cv::getTickCount();
         std::vector<LidarPoint> lidarPoints;
         loadLidarFromFile(lidarPoints, lidarFullFilename);
@@ -215,11 +226,11 @@ eval_summary _main(int argc, const char *argv[])
         t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
         summary.lidar_process_time.push_back(t);
 
-        cout << "#3 : LOAD AND CROP LIDAR POINTS. done in " << t*1000 << "[ms]" << endl;
+        // cout << "        done in " << t*1000 << "[ms]" << endl;
 
         /* CLUSTER LIDAR POINT CLOUD */
 
-        cout << "#4 : CLUSTER LIDAR POINT CLOUD..." << endl;
+        cout << "  Step #4  : CLUSTER LIDAR POINT CLOUD..." << endl;
         t = (double)cv::getTickCount();
         // associate Lidar points with camera-based ROI
         float shrinkFactor = 0.10; // shrinks each bounding box by the given percentage to avoid 3D object merging at the edges of an ROI
@@ -227,13 +238,9 @@ eval_summary _main(int argc, const char *argv[])
         t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
 
         // Visualize 3D objects
-        if(bVis)
-        {
-            show3DObjects((dataBuffer.end()-1)->boundingBoxes, cv::Size(4.0, 20.0), cv::Size(1200, 1200), true);
-        }
-
-        cout << "#4 : CLUSTER LIDAR POINT CLOUD. done in " << t*1000 << "[ms]" << endl;
-        
+        lidar_data ld =  show3DObjects((dataBuffer.end()-1)->boundingBoxes, cv::Size(4.0, 20.0), cv::Size(1200, 1200), bVis, true, bRemoveBBOutliers);
+        summary.lidar_estimates.push_back(ld);
+        // cout << "        done in " << t*1000 << "[ms]" << endl;        
         
         // REMOVE THIS LINE BEFORE PROCEEDING WITH THE FINAL PROJECT
         // continue; // skips directly to the next image without processing what comes beneath
@@ -257,7 +264,7 @@ eval_summary _main(int argc, const char *argv[])
             summary.detect_time.push_back(stats.time);
             summary.detect_points.push_back(stats.points);
         } catch (exception &e) {
-            cerr << "Exception occurred while processing keypoints: " << e.what() << endl;
+            cerr << "        Exception occurred while processing keypoints: " << e.what() << endl;
             summary.det_err_cnt += 1;
             continue;
         }
@@ -273,13 +280,13 @@ eval_summary _main(int argc, const char *argv[])
                 keypoints.erase(keypoints.begin() + maxKeypoints, keypoints.end());
             }
             cv::KeyPointsFilter::retainBest(keypoints, maxKeypoints);
-            cout << " NOTE: Keypoints have been limited!" << endl;
+            cout << "        NOTE: Keypoints have been limited!" << endl;
         }
 
         // push keypoints and descriptor for current frame to end of data buffer
         (dataBuffer.end() - 1)->keypoints = keypoints;
 
-        cout << "#5 : DETECT KEYPOINTS done" << endl;
+        cout << "  Step #5  : DETECT KEYPOINTS done" << endl;
 
 
         int normType;
@@ -288,7 +295,7 @@ eval_summary _main(int argc, const char *argv[])
             stats = descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorType, normType);
             summary.description_time.push_back(stats.time);
         } catch (exception &e) {
-            cerr << "Exception occurred while processing descriptors: " << e.what() << endl;
+            cerr << "        Exception occurred while processing descriptors: " << e.what() << endl;
             summary.des_err_cnt += 1;
             continue;
         }
@@ -298,13 +305,13 @@ eval_summary _main(int argc, const char *argv[])
         // push descriptors for current frame to end of data buffer
         (dataBuffer.end() - 1)->descriptors = descriptors;
 
-        cout << "#6 : EXTRACT DESCRIPTORS done" << endl;
-
+        // cout << "        done." << endl;
 
         if (dataBuffer.size() > 1) // wait until at least two images have been processed
         {
-
             /* MATCH KEYPOINT DESCRIPTORS */
+
+            cout << "  Step #7  : MATCH KEYPOINT DESCRIPTORS" << endl;
 
             vector<cv::DMatch> matches;
             try {
@@ -314,30 +321,30 @@ eval_summary _main(int argc, const char *argv[])
                 summary.match_time.push_back(stats.time);
                 summary.match_points.push_back(stats.points);
             } catch (exception &e) {
-                cerr << "Exception occurred while processing matches: " << e.what() << endl;
+                cerr << "        Exception occurred while processing matches: " << e.what() << endl;
                 summary.mat_err_cnt += 1;
                 continue;
             }
-
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
 
-            cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << endl;
-
-            
             /* TRACK 3D OBJECT BOUNDING BOXES */
 
             //// STUDENT ASSIGNMENT
             //// TASK FP.1 -> match list of 3D objects (vector<BoundingBox>) between current and previous frame (implement ->matchBoundingBoxes)
             map<int, int> bbBestMatches;
+
+            cout << "  Step #8  : MATCH BOUNDING BOXES" << endl;
+
+            t = (double)cv::getTickCount();
             matchBoundingBoxes(matches, bbBestMatches, *(dataBuffer.end()-2), *(dataBuffer.end()-1)); // associate bounding boxes between current and previous frame using keypoint matches
+            t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+            summary.bounding_box_time.push_back(t);
+
             //// EOF STUDENT ASSIGNMENT
 
             // store matches in current data frame
             (dataBuffer.end()-1)->bbMatches = bbBestMatches;
-
-            cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
-
 
             /* COMPUTE TTC ON OBJECT IN FRONT */
 
@@ -362,27 +369,50 @@ eval_summary _main(int argc, const char *argv[])
                     }
                 }
 
-                cout << "currBB[" << currBB->boxID << "] size = " << currBB->lidarPoints.size() <<  "   ";
-                cout << "prevBB[" << prevBB->boxID << "] size = " << prevBB->lidarPoints.size() << endl;
-
+                double ttcLidar = 0.0; 
+                double ttcCamera = 0.0;
+                double medTtcLidar = 0.0; 
+                double medTtcCamera = 0.0;
                 // compute TTC for current match
                 if( currBB->lidarPoints.size()>0 && prevBB->lidarPoints.size()>0 ) // only compute TTC if we have Lidar points
                 {
                     //// STUDENT ASSIGNMENT
                     //// TASK FP.2 -> compute time-to-collision based on Lidar data (implement -> computeTTCLidar)
-                    double ttcLidar; 
-                    computeTTCLidar(prevBB->lidarPoints, currBB->lidarPoints, sensorFrameRate, ttcLidar);
+
+                    cout << "  Step #9  : COMPUTE TTC LIDAR" << endl;
+                    
+                    t = (double)cv::getTickCount();
+                    computeTTCLidar(prevBB->lidarPoints, currBB->lidarPoints, sensorFrameRate, ttcLidar, medTtcLidar, bRemoveBBOutliers);
+                    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+                    summary.ttc_lidar_time.push_back(t);
+
                     //// EOF STUDENT ASSIGNMENT
 
                     //// STUDENT ASSIGNMENT
                     //// TASK FP.3 -> assign enclosed keypoint matches to bounding box (implement -> clusterKptMatchesWithROI)
                     //// TASK FP.4 -> compute time-to-collision based on camera (implement -> computeTTCCamera)
-                    double ttcCamera;
-                    clusterKptMatchesWithROI(*currBB, (dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->kptMatches);                    
-                    computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
+
+                    cout << "  Step #10 : CLUSTER KPT MATCHES WITH ROI" << endl;
+        
+                    t = (double)cv::getTickCount();
+                    clusterKptMatchesWithROI(*currBB, (dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->kptMatches,
+                        bRemoveKptOutliers);   
+                    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+                    summary.cluster_kpts_roi_time.push_back(t);
+
+                    cout << "  Step #11 : COMPUTE TTC CAMERA" << endl;
+
+                    t = (double)cv::getTickCount();
+                    computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera, medTtcCamera);
+                    t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
+                    summary.ttc_camera_time.push_back(t);
+
+                    cout << "FP:  medTtcCamera: " << medTtcCamera << endl;
+                    cout << "FP:  ttcCamera: " << ttcCamera << endl;
                     //// EOF STUDENT ASSIGNMENT
 
                     assert(!isnan(ttcCamera));
+                    assert(!isnan(medTtcCamera));
 
                     if (bVis)
                     {
@@ -400,9 +430,21 @@ eval_summary _main(int argc, const char *argv[])
                         cout << "Press key to continue to next frame" << endl;
                         cv::waitKey(0);
                     }
+
+                    summary.ttc_lidar.push_back(ttcLidar);
+                    summary.ttc_camera.push_back(ttcCamera);                    
+                    summary.median_ttc_lidar.push_back(medTtcLidar);
+                    summary.median_ttc_camera.push_back(medTtcCamera);
+
+                    summary.delta_t.push_back(1.0/sensorFrameRate);
+                    summary.current_time.push_back(current_time);
+                    current_time += 1.0/sensorFrameRate;
                 } // eof TTC computation
             } // eof loop over all BB matches            
         }
+
+        total_processing_time = ((double)cv::getTickCount() - total_processing_time) / cv::getTickFrequency();
+        summary.total_processing_time.push_back(total_processing_time);
     } // eof loop over all images
 
     return summary;
@@ -454,26 +496,50 @@ void task8(ofstream &fout, vector<eval_summary> &summaries) {
 
 #endif
 
+void dump_frame_stats(ofstream &fout, vector<eval_summary> &summaries) {
+    fout << "detector,descriptor,matcher,selector,rem_bb_out,rem_kpt_out,keypoints,matchpts,proc_time,";
+    fout << "frame,ttcCamera,ttcLidar,medTtcCamera,medTtcLidar,xmin_raw,width_raw,xmin_filt,width_filt,time,delta_t" << endl;
+
+    for (auto const &eval : summaries) {
+        for (int i = 1; i < eval.delta_t.size(); i++) {
+            fout << eval.detector_type << "," << eval.descriptor_type << ",";
+            fout << eval.matcher_type << "," << eval.selector_type << ",";
+            fout << (eval.remove_bb_outliers ? "1" : "0") << ",";
+            fout << (eval.remove_kpt_outliers ? "1" : "0") << ",";
+            fout << eval.detect_points[i] << "," << eval.match_points[i] << ",";
+            fout << eval.total_processing_time[i] << ",";
+            fout << i << ",";
+            fout << eval.ttc_camera[i] << "," << eval.ttc_lidar[i] << ",";
+            fout << eval.median_ttc_camera[i] << "," << eval.median_ttc_lidar[i] << ",";
+            fout << eval.lidar_estimates[i].xmin_raw << ",";
+            fout << eval.lidar_estimates[i].width_raw << ",";
+            fout << eval.lidar_estimates[i].xmin_filtered << ",";
+            fout << eval.lidar_estimates[i].width_filtered << ",";
+            fout << eval.current_time[i] << "," << eval.delta_t[i] << endl;
+        }
+    }
+}
+
 int batch_main(int argc, const char *argv[]) {
-    vector<string> detectors =  { "SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE", "SIFT" };
-    // vector<string> detectors =  { "SIFT" };
+    // vector<string> detectors =  { "SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE", "SIFT" };
+    vector<string> detectors =  { "SHITOMASI" };
     // vector<string> matchers =  { "MAT_BF", "MAT_FLANN" };
     vector<string> matchers =  { "MAT_BF" };
     // SIFT with ORB results in OOM exceptions
     // vector<string> descriptors =  { "BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT" };
-    vector<string> descriptors =  { "BRISK" };
+    vector<string> descriptors =  { "ORB" };
     // vector<string> selectors =  { "SEL_NN", "SEL_KNN" };
     vector<string> selectors =  { "SEL_KNN" };
 
-    bool focusOnVehicle = false;
-    bool limitKpts = false;
+    bool removeBBOutliers = false;
+    bool removeKptOutliers = false;
     bool visualize = false;
     for (int i = 0; i < argc; i++) {
-        if (strncmp(argv[i], "-f", 2) == 0) {
-            focusOnVehicle = true;
+        if (strncmp(argv[i], "-o1", 3) == 0) {
+            removeBBOutliers = true;
         }
-        if (strncmp(argv[i], "-l", 2) == 0) {
-            limitKpts = true;
+        if (strncmp(argv[i], "-o2", 3) == 0) {
+            removeKptOutliers = true;
         }
         if (strncmp(argv[i], "-v", 2) == 0) {
             visualize = true;
@@ -505,11 +571,11 @@ int batch_main(int argc, const char *argv[]) {
                     args[8] = sel.c_str();
             
                     // put any options back in to batch flow
-                    if (focusOnVehicle) {
-                        args[ac++] =  "-f";
+                    if (removeBBOutliers) {
+                        args[ac++] = "-o1";
                     }
-                    if (limitKpts) {
-                        args[ac++] = "-l";
+                    if (removeKptOutliers) {
+                        args[ac++] = "-o2";
                     }
                     if (visualize) {
                         args[ac++] = "-v";
@@ -526,46 +592,38 @@ int batch_main(int argc, const char *argv[]) {
     // double  match_time[MAX_EVALS];
     // int     match_points[MAX_EVALS];
 
-    // focusOnVehicle
-    // limitKeypoints
-
-    string foutname("stats.csv");
+    string foutname("summary_stats.csv");
     ofstream fout(foutname, ios::out);
 
-    if (false) {
-        // task7(fout, summaries);
+    if (true) {
+        dump_frame_stats(fout, summaries);
         // task8(fout, summaries);
     } else {
-        fout << "detector, descriptor, matcher, selector, det[ms], num_keypoints, desc[ms], match[ms], num_matchpts, det_err, des_err, mat_err" << endl;
+        fout << "detector, descriptor, matcher, selector, rem_bb_out, rem_kpt_out, avg_keypoints, avg_matchpts, avg_time" << endl;
         for (auto &eval : summaries) {
             double avg_detect_time_ms, std_detect_time_ms;
-            tie(avg_detect_time_ms, std_detect_time_ms) = do_stats(std::vector<double>(eval.detect_time.begin() + 1, eval.detect_time.end()));
-            double avg_description_time_ms = accumulate(eval.description_time.begin() + 1, eval.description_time.end(), 0.0)*1000/(eval.description_time.size() - 1);
-            double avg_match_time_ms = accumulate(eval.match_time.begin() + 1, eval.match_time.end(), 0.0)*1000/(eval.match_time.size() - 1);
-            int avg_detect_pts;
-            if (focusOnVehicle) {
-                avg_detect_pts = accumulate(eval.detect_veh_points.begin() + 1, eval.detect_veh_points.end(), 0)/(eval.detect_veh_points.size() - 1);
-            } else {
-                avg_detect_pts = accumulate(eval.detect_points.begin() + 1, eval.detect_points.end(), 0)/(eval.detect_points.size() - 1);
-            }     
+            // tie(avg_detect_time_ms, std_detect_time_ms) = do_stats(std::vector<double>(eval.detect_time.begin() + 1, eval.detect_time.end()));
+            // double avg_description_time_ms = accumulate(eval.description_time.begin() + 1, eval.description_time.end(), 0.0)*1000/(eval.description_time.size() - 1);
+            // double avg_match_time_ms = accumulate(eval.match_time.begin() + 1, eval.match_time.end(), 0.0)*1000/(eval.match_time.size() - 1);
+            int avg_detect_pts = accumulate(eval.detect_points.begin() + 1, eval.detect_points.end(), 0)/(eval.detect_points.size() - 1);
             int avg_match_pts = accumulate(eval.match_points.begin() + 1, eval.match_points.end(), 0)/(eval.match_points.size() - 1);
+            double avg_processing_time = accumulate(eval.total_processing_time.begin() + 1, eval.total_processing_time.end(), 0.0)*1000/(eval.total_processing_time.size() - 1);
 
             cout << eval.detector_type << "," << eval.descriptor_type << ",";
             cout << eval.matcher_type << "," << eval.selector_type << ",";
-            cout << " avg_det: " << avg_detect_time_ms << "[ms],";
+            cout << (eval.remove_bb_outliers ? "1" : "0") << ",";
+            cout << (eval.remove_kpt_outliers ? "1" : "0") << ",";
             cout << " avg_kpts: " << avg_detect_pts << "[pts],";
-            cout << " avg_des: " << avg_description_time_ms << "[ms],";
             cout << " avg_mat_pts: " << avg_match_pts << "[pts],";
-            cout << " avg_mat: " << avg_match_time_ms << "[ms]";
-            cout << " det_err: " << eval.det_err_cnt << ", des_err: " << eval.des_err_cnt << ", mat_err: " << eval.mat_err_cnt;
-            cout << endl;
+            cout << " time: " << avg_processing_time << "[ms]" << endl; 
+
             fout << eval.detector_type << ", " << eval.descriptor_type << ", ";
             fout << eval.matcher_type << ", " << eval.selector_type << ", ";
-            fout << avg_detect_time_ms << ", " << avg_detect_pts << ", ";
-            fout << avg_description_time_ms << ", ";
-            fout << avg_match_time_ms << ", " << avg_match_pts << ", ";
-            fout << eval.det_err_cnt << ", " << eval.des_err_cnt << ", " << eval.mat_err_cnt;
-            fout << endl;
+            fout << (eval.remove_bb_outliers ? "1" : "0") << ",";
+            fout << (eval.remove_kpt_outliers ? "1" : "0") << ",";
+            fout << avg_detect_pts << ", ";
+            fout << avg_match_pts << ", ";
+            fout << avg_processing_time << endl;
         }
     }
     fout.close();
@@ -592,13 +650,37 @@ int main(int argc, const char *argv[]) {
         cout << " Matcher Type: " << summary.matcher_type << endl;
         cout << " Descriptor Type: " << summary.descriptor_type << endl;
         cout << " Selector Type: " << summary.selector_type << endl;
+        cout << "  Option:  Remove BB Outliers: " << summary.remove_bb_outliers << endl;
+        cout << "  Option:  Remove Kpt Outliers: " << summary.remove_kpt_outliers << endl;
 
-        for (int i = 1; i < summary.detect_time.size(); i++) {
-            cout << "detect_time: " << summary.detect_time[i]*1000 << "[ms] points: " << summary.detect_points[i] << " ";
-            cout << "match_time: " << summary.match_time[i]*1000 << "[ms] points: " << summary.match_points[i] << endl;
+        for (int i = 1; i < summary.total_processing_time.size() - 1; i++) {
+            // cout << "detect_time: " << summary.detect_time[i]*1000 << "[ms] points: " << summary.detect_points[i] << " ";
+            // cout << "match_time: " << summary.match_time[i]*1000 << "[ms] points: " << summary.match_points[i] << endl; 
+            // cout << "bounding box time: " << summary.bounding_box_time[i]*1000 << "[ms]" << endl;
+            // cout << "ttc lidar time: " << summary.ttc_lidar_time[i]*1000 << "[ms]" << endl;
+            // cout << "cluster kpts roi time: " << summary.cluster_kpts_roi_time[i]*1000 << "[ms]" << endl;
+            // cout << "ttc camera time: " << summary.ttc_camera_time[i]*1000 << "[ms]" << endl;
+
+            cout << "processing time: " << summary.total_processing_time[i]*1000 << "[ms]" << endl;
+            
+            cout << "ttc lidar: " << summary.ttc_lidar[i] << endl;
+            cout << "ttc camera: " << summary.ttc_camera[i] << endl;            
+            cout << "median ttc lidar: " << summary.median_ttc_lidar[i] << endl;
+            cout << "median ttc camera: " << summary.median_ttc_camera[i] << endl;
+
+            lidar_data ld = summary.lidar_estimates[i];
+
+            cout << "lidar raw xmin: " << ld.xmin_raw << endl;
+            cout << "lidar raw width: " << ld.width_raw << endl;
+            cout << "lidar filtered xmin: " << ld.xmin_filtered << endl;
+            cout << "lidar filtered width: " << ld.width_filtered << endl;
+
+            cout << "delta_t: " << summary.delta_t[i] << endl;
         }
+
         cout << "avg total detect time: " << accumulate(summary.detect_time.begin() + 1, summary.detect_time.end(), 0.0)*1000/(summary.detect_time.size() - 1) << "[ms]" << endl;
         cout << "avg total match time: " << accumulate(summary.match_time.begin() + 1, summary.match_time.end(), 0.0)*1000/(summary.match_time.size() - 1) << "[ms]" << endl;
+        cout << "avg total processing time: " << accumulate(summary.total_processing_time.begin() + 1, summary.total_processing_time.end(), 0.0)*1000/(summary.total_processing_time.size() - 1) << "[ms]" << endl;  
     }
 
     return 0;

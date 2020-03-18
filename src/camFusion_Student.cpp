@@ -66,32 +66,42 @@ void clusterLidarWithROI(std::vector<BoundingBox> &boundingBoxes, std::vector<Li
 //
 // modified to show inliers vs outlier points.
 //
-void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, cv::Size imageSize, bool bWait)
+lidar_data show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, cv::Size imageSize, 
+    bool bVis, bool bWait, bool removeOutliers)
 {
+    lidar_data ret;
     // create topview image
     cv::Mat topviewImg(imageSize, CV_8UC3, cv::Scalar(255, 255, 255));
 
     int inlierCnt = 0;
     for(auto it1=boundingBoxes.begin(); it1!=boundingBoxes.end(); ++it1)
     {
+        bool processed = false;
         // create randomized color for current 3D object
         cv::RNG rng(it1->boxID);
         cv::Scalar currColor = cv::Scalar(rng.uniform(0,150), rng.uniform(0, 150), rng.uniform(0, 150));
 
-        vector<bool> inliers = findInliers(it1->lidarPoints, 5, 1);
+        vector<bool> inliers = findInliers(it1->lidarPoints, 10, 1);
 
         // plot Lidar points into top view image
         int top=1e8, left=1e8, bottom=0.0, right=0.0; 
         float xwmin=1e8, ywmin=1e8, ywmax=-1e8;
+        float xwmin_il=1e8, ywmin_il=1e8, ywmax_il=-1e8;
         int idx = 0;
         for (auto it2 = it1->lidarPoints.begin(); it2 != it1->lidarPoints.end(); ++it2, ++idx)
         {
+            processed = true;
             // world coordinates
             float xw = (*it2).x; // world position in m with x facing forward from sensor
             float yw = (*it2).y; // world position in m with y facing left from sensor
             xwmin = xwmin<xw ? xwmin : xw;
             ywmin = ywmin<yw ? ywmin : yw;
             ywmax = ywmax>yw ? ywmax : yw;
+            if (removeOutliers && inliers[idx]) {
+                xwmin_il = xwmin_il <xw ? xwmin_il : xw;
+                ywmin_il = ywmin_il <yw ? ywmin_il : yw;
+                ywmax_il = ywmax_il >yw ? ywmax_il : yw;                
+            }
 
             // top-view coordinates
             int y = (-xw * imageSize.height / worldSize.height) + imageSize.height;
@@ -104,7 +114,7 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
             right = right>x ? right : x;
 
             // draw individual point
-            if (inliers[idx]) {
+            if (!removeOutliers || inliers[idx]) {
                 cv::circle(topviewImg, cv::Point(x, y), 4, currColor, -1);
                 inlierCnt++;
             } else {
@@ -117,11 +127,23 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
         cv::rectangle(topviewImg, cv::Point(left, top), cv::Point(right, bottom),cv::Scalar(0,0,0), 2);
 
         // augment object with some key data
-        char str1[200], str2[200];
+        char str1[200], str2[200], str3[200];
         sprintf(str1, "id=%d, #pts=%d, #inliers=%d", it1->boxID, (int)it1->lidarPoints.size(), inlierCnt);
         putText(topviewImg, str1, cv::Point2f(left-250, bottom+50), cv::FONT_ITALIC, 2, currColor);
         sprintf(str2, "xmin=%2.2f m, yw=%2.2f m", xwmin, ywmax-ywmin);
         putText(topviewImg, str2, cv::Point2f(left-250, bottom+125), cv::FONT_ITALIC, 2, currColor);  
+        if (removeOutliers) {
+            sprintf(str3, "inlier xmin=%2.2f m, yw=%2.2f m", xwmin_il, ywmax_il-ywmin_il);
+            putText(topviewImg, str3, cv::Point2f(left-250, bottom+200), cv::FONT_ITALIC, 2, currColor);  
+        }       
+
+        // assuming only one iteration of the loop...
+        if (processed) {
+            ret.xmin_raw = xwmin;
+            ret.width_raw = ywmax-ywmin;
+            ret.xmin_filtered = xwmin_il;
+            ret.width_filtered = ywmax_il - ywmin_il;
+        }
     }
 
     // plot distance markers
@@ -133,15 +155,19 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
         cv::line(topviewImg, cv::Point(0, y), cv::Point(imageSize.width, y), cv::Scalar(255, 0, 0));
     }
 
-    // display image
-    string windowName = "3D Objects";
-    cv::namedWindow(windowName, 1);
-    cv::imshow(windowName, topviewImg);
+    if (bVis) {
+        // display image
+        string windowName = "3D Objects";
+        cv::namedWindow(windowName, 1);
+        cv::imshow(windowName, topviewImg);
 
-    if(bWait)
-    {
-        cv::waitKey(0); // wait for key to be pressed
+        if(bWait)
+        {
+            cv::waitKey(0); // wait for key to be pressed
+        }
     }
+
+    return ret;
 }
 
 // associate a given bounding box with the keypoints it contains.
@@ -149,7 +175,7 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
 // quality matching here minimizes computation/error of TTC estimation.
 //
 void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
-    std::vector<cv::DMatch> &kptMatches)
+    std::vector<cv::DMatch> &kptMatches, bool removeKptOutliers)
 {
     std::vector<cv::DMatch> kpts_roi;
 
@@ -161,6 +187,13 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
         if (boundingBox.roi.contains(kptsCurr[match.trainIdx].pt)) {
             kpts_roi.push_back(match);
         }
+    }
+
+    if (!removeKptOutliers) {
+        for (auto const &match : kpts_roi) {
+            boundingBox.kptMatches.push_back(match);
+        }
+        return;
     }
 
     // the following filters out keypoints that move too much or too little - which may
@@ -193,13 +226,13 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
         }
     }
 
-    cout << "clusterKptMatchesWithROI.  num kpt candidates in bbox = " << kpts_roi.size() << ", after filtering = " << boundingBox.kptMatches.size() << endl;
+    // cout << "clusterKptMatchesWithROI.  num kpt candidates in bbox = " << kpts_roi.size() << ", after filtering = " << boundingBox.kptMatches.size() << endl;
 }
 
 
 // Compute time-to-collision (TTC) based on keypoint correspondences in successive images
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
-                      std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
+                      std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, double &medTTC, cv::Mat *visImg)
 {
     // Lesson 3 - Estimating TTC with a mono camera
     vector<double> distRatios;
@@ -229,17 +262,29 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     if (distRatios.size() == 0)
     {
         TTC = NAN;
-        return;
+        return; 
     }
+
 
     // use the median of the distance ratios to negate effects of outliers
     sort(distRatios.begin(), distRatios.end());
+    for (auto const &dr : distRatios) {
+        cout << dr << " ";
+    }
+    cout << endl;
     int medIndex = floor(distRatios.size()/2);
     double medianDistRatio = (distRatios.size() % 2 == 0) ? 0.5*(distRatios[medIndex - 1] + distRatios[medIndex]) : distRatios[medIndex];
 
     // Finally, calculate a TTC estimate based on these 2D camera features
     double delta_t = 1.0/frameRate;
-    TTC = -delta_t/(1.0 - medianDistRatio);
+    medTTC = -delta_t/(1.0 - medianDistRatio);
+    cout << "medianDistRatio: " << medianDistRatio << " medTTC: " << medTTC << endl;
+
+    // Finally, calculate a TTC estimate based on these 2D camera features
+    double avgDistRatio = accumulate(distRatios.begin(), distRatios.end(), 0.0)/distRatios.size();
+    TTC =  -delta_t/(1.0 - avgDistRatio);
+    cout << "avgDistRatio: " << avgDistRatio << " TTC: " << TTC << endl;
+
 }
 
 #include <pcl/common/common_headers.h>
@@ -399,24 +444,61 @@ std::vector<bool> findInliers(const std::vector<LidarPoint> &lpoints, int nn, do
         inliers[idx] = (dist[idx] < threshold);
     }
 
-    int icnt = count_if(inliers.begin(), inliers.end(), [=](int i)-> bool { return inliers[i]; });
-    cout << "LidarPoints: [" << icnt << "] of [" << size << "] points are inliers." << endl;
+    // int icnt = count_if(inliers.begin(), inliers.end(), [=](int i)-> bool { return inliers[i]; });
+    // cout << "LidarPoints: [" << icnt << "] of [" << size << "] points are inliers." << endl;
 
     return inliers;
 }
 
-void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
-                     std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC)
+void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev, std::vector<LidarPoint> &lidarPointsCurr, 
+    double frameRate, double &TTC, double &medTTC, bool removeOutliers)
 {
     double delta_t = 1.0/frameRate;
 
-    vector<bool> prevInliers = findInliers(lidarPointsPrev, 5, 2);
-    vector<bool> currInliers = findInliers(lidarPointsCurr, 5, 2);
+    vector<bool> prevInliers;
+    vector<bool> currInliers;
 
+    if (removeOutliers) {
+        prevInliers = findInliers(lidarPointsPrev, 10, 1);
+        currInliers = findInliers(lidarPointsCurr, 10, 1);        
+    }
+
+    // compute median
+    medTTC = 0.0;
+    // scope this calculation - prob to be not useful, but curious
+    if (true) {
+        vector<double> prev_ests, curr_ests;
+
+        for (int idx = 0; idx < lidarPointsPrev.size(); idx++) {
+            if (!removeOutliers || prevInliers[idx]) {                
+                prev_ests.push_back(lidarPointsPrev[idx].x);
+            }
+        }
+
+        for (int idx = 0; idx < lidarPointsCurr.size(); idx++) {
+            if (!removeOutliers || currInliers[idx]) {
+                curr_ests.push_back(lidarPointsCurr[idx].x);
+            }
+        }
+     
+        sort(prev_ests.begin(), prev_ests.end());
+        int medIndex = floor(prev_ests.size()/2);
+        double prev_est = (prev_ests.size() % 2 == 0) ? 0.5*(prev_ests[medIndex - 1] + prev_ests[medIndex]) : prev_ests[medIndex];
+    
+        sort(curr_ests.begin(), curr_ests.end());
+        medIndex = floor(curr_ests.size()/2);
+        double curr_est = (curr_ests.size() % 2 == 0) ? 0.5*(curr_ests[medIndex - 1] + curr_ests[medIndex]) : curr_ests[medIndex];
+ 
+        double delta_x = fabs(curr_est - prev_est);
+        medTTC = curr_est*(delta_t/max(delta_x, std::numeric_limits<double>::min())); 
+    }
+
+
+    // compute avg
     double prev_est(0.0), curr_est(0.0);
     int inlier_cnt = 0;
     for (int idx = 0; idx < lidarPointsPrev.size(); idx++) {
-        if (prevInliers[idx]) {                
+        if (!removeOutliers || prevInliers[idx]) {                
             prev_est += lidarPointsPrev[idx].x;
             inlier_cnt++;
         }
@@ -425,14 +507,15 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
 
     inlier_cnt = 0;
     for (int idx = 0; idx < lidarPointsCurr.size(); idx++) {
-        if (currInliers[idx]) {
+        if (!removeOutliers || currInliers[idx]) {
             curr_est += lidarPointsCurr[idx].x;
             inlier_cnt++;
         }
     }
     curr_est /= inlier_cnt;
+
     double delta_x = fabs(curr_est - prev_est);
-    TTC = curr_est*(delta_t/max(delta_x, std::numeric_limits<double>::min()));
+    TTC = curr_est*(delta_t/max(delta_x, std::numeric_limits<double>::min()));   
 }
 
 /**
@@ -450,8 +533,7 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
 {
     multimap<int, int> kPMap;
 
-    // for every feature descriptor match, associate it to one or more 
-    // bounding boxes.
+    // for every feature descriptor match, associate it to one or more bounding boxes.
     for (auto match : matches) {
         // match argument order dictates association
         // prevFrame -> queryIdx
@@ -484,16 +566,15 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
     }
 
     // determine the best match for each previous -> current frame (max KPs)
+    // column counts for each row.
     for (auto box : prevFrame.boundingBoxes) {
         int prevIdx = box.boxID;
-//        cout << "matchBoundingBoxes. boxID { " << prevIdx << "} "; 
 
         map<int, int> counts;
         auto brange = kPMap.equal_range(prevIdx);
         for (auto it = brange.first; it != brange.second; it++) {
             counts[it->second]++;
         }
-        cout << endl;
 
         // for (const auto &count : counts) {
         //     cout << "count[" << count.first << "] = " << count.second << endl;
@@ -504,7 +585,6 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
             });
         int maxCurrIdx = best->first;
 
-//        cout << "maxCurrIdx: " << maxCurrIdx << endl;
         bbBestMatches.insert({prevIdx, maxCurrIdx});
     }
 }

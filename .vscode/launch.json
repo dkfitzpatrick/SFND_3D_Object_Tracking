@@ -4,8 +4,9 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
         {
-            "name": "g++ build and debug active file",
+            "name": "base case",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/3D_object_tracking",
@@ -33,6 +34,61 @@
             ],
             "preLaunchTask": "do make",
             "miDebuggerPath": "/usr/bin/gdb"
-        }
+        },
+        {
+            "name": "base case + boundingbox optimization-o1",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/3D_object_tracking",
+            "args": [
+                "-d",
+                "SHITOMASI",
+                "-m",
+                "MAT_BF",
+                "-x",
+                "ORB",
+                "-s",
+                "SEL_KNN",
+                "-o1"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "do make",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        {
+            "name": "batch + boundingbox optimization-o1",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/3D_object_tracking",
+            "args": [
+                "-b",
+                "-o1"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "do make",
+            "miDebuggerPath": "/usr/bin/gdb"
+        }              
     ]
 }

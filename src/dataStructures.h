@@ -42,11 +42,20 @@ struct eval_stats {
     int points;
 };
 
+struct lidar_data {
+    double xmin_raw;
+    double width_raw;
+    double xmin_filtered;
+    double width_filtered;
+};
+
 struct eval_summary {
     std::string  detector_type;
     std::string  descriptor_type;
     std::string  matcher_type;
     std::string  selector_type;
+    bool remove_bb_outliers;
+    bool remove_kpt_outliers;
 
     int det_err_cnt;
     int des_err_cnt;
@@ -60,6 +69,23 @@ struct eval_summary {
     std::vector<double>  description_time;
     std::vector<double>  match_time;
     std::vector<int>     match_points;
+
+    std::vector<lidar_data> lidar_estimates;
+
+    std::vector<double>  bounding_box_time;
+    std::vector<double>  ttc_lidar_time;
+    std::vector<double>  cluster_kpts_roi_time;
+    std::vector<double>  ttc_camera_time;
+
+    std::vector<double>  total_processing_time;
+    std::vector<double>  ttc_lidar;
+    std::vector<double>  ttc_camera;
+    std::vector<double>  median_ttc_lidar;
+    std::vector<double>  median_ttc_camera;
+
+
+    std::vector<double>  delta_t;
+    std::vector<double>  current_time;
 };
 
 
