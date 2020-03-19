@@ -199,7 +199,8 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
     // the following filters out keypoints that move too much or too little - which may
     // be more likely to be failures with keypoint matching.
     //
-    // not enough testing to prove one way or the other.
+    // train index in current keypoints is queryidx in prev.
+    //
     int size = kpts_roi.size();
     double mean = accumulate(kpts_roi.begin(), kpts_roi.end(), 0.0,
         [=](double meansum, const cv::DMatch &m) -> double {
@@ -213,6 +214,7 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
             return varsum + ((dist - mean)*(dist - mean)/(size - 1));
         });
     double std_dev = sqrt(var);
+    // cout << "kpt movement.  mean: " << mean << ", std_dev: " << std_dev << endl;
 
     // define min and max threshold to remove matches that probably represent outliers
     constexpr double std_mult = 1.0;
@@ -229,10 +231,23 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
     // cout << "clusterKptMatchesWithROI.  num kpt candidates in bbox = " << kpts_roi.size() << ", after filtering = " << boundingBox.kptMatches.size() << endl;
 }
 
+double ttc(const double delta_t, const double distRatio) {
+    // if (fabs(1.0 - distRatio) <= numeric_limits<double>::epsilon()) {
+    //     return numeric_limits<double>::max();
+    // }
+
+    const double ttc_max = 120;   // use 120 min as 'inf' for ttc calc
+    const double drMin = 1.0 + delta_t/120;   
+    if (distRatio > drMin) {
+        return -delta_t/(1.0 - distRatio);
+    } else {
+        return 120;
+    }
+}
 
 // Compute time-to-collision (TTC) based on keypoint correspondences in successive images
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
-                      std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, double &medTTC, cv::Mat *visImg)
+    std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, double &medTTC, bool postFilter, cv::Mat *visImg)
 {
     // Lesson 3 - Estimating TTC with a mono camera
     vector<double> distRatios;
@@ -265,26 +280,61 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
         return; 
     }
 
+    if (postFilter) {
+        int size = distRatios.size();
+        double mean = accumulate(distRatios.begin(), distRatios.end(), 0.0);
+        mean /= size;
+
+        double var =  accumulate(distRatios.begin(), distRatios.end(), 0.0, 
+            [=](double varsum, double dist) -> double {
+                return varsum + ((dist - mean)*(dist - mean)/(size - 1));
+            });
+        double std_dev = sqrt(var);
+        // cout << "kpt post outlier.  mean: " << mean << ", std_dev: " << std_dev << endl;
+
+        // define min and max threshold to remove matches that probably represent outliers
+        constexpr double std_mult = 1.0;
+        double min_thr = max(0.0, mean - std_mult*std_dev);
+        double max_thr = mean + std_mult*std_dev;      
+
+        vector<double> postDistRatios;
+        for (auto const dist : distRatios) {
+            if (min_thr < dist && dist < max_thr) {
+                postDistRatios.push_back(dist);
+            }
+        }        
+        // cout << "kpt post outlier.  start size = " << distRatios.size() << ", after filtering = " << postDistRatios.size() << endl;
+
+        distRatios = postDistRatios;
+    }
 
     // use the median of the distance ratios to negate effects of outliers
     sort(distRatios.begin(), distRatios.end());
-    for (auto const &dr : distRatios) {
-        cout << dr << " ";
-    }
-    cout << endl;
+
+    // debug
+    // int cnt = 0;
+    // for (auto const &dr : distRatios) {
+    //     cout << dr << " ";
+    //     cnt += 1;
+    //     if (cnt == 10) {
+    //         cnt = 0;
+    //         cout << endl;
+    //     }
+    // }
+    // if (cnt > 0) cout << endl;
+
     int medIndex = floor(distRatios.size()/2);
     double medianDistRatio = (distRatios.size() % 2 == 0) ? 0.5*(distRatios[medIndex - 1] + distRatios[medIndex]) : distRatios[medIndex];
 
     // Finally, calculate a TTC estimate based on these 2D camera features
     double delta_t = 1.0/frameRate;
-    medTTC = -delta_t/(1.0 - medianDistRatio);
-    cout << "medianDistRatio: " << medianDistRatio << " medTTC: " << medTTC << endl;
+    medTTC = ttc(delta_t, medianDistRatio);
+    // cout << "medianDistRatio: " << medianDistRatio << " medTTC: " << medTTC << endl;
 
     // Finally, calculate a TTC estimate based on these 2D camera features
     double avgDistRatio = accumulate(distRatios.begin(), distRatios.end(), 0.0)/distRatios.size();
-    TTC =  -delta_t/(1.0 - avgDistRatio);
-    cout << "avgDistRatio: " << avgDistRatio << " TTC: " << TTC << endl;
-
+    TTC =  ttc(delta_t, avgDistRatio);
+    // cout << "avgDistRatio: " << avgDistRatio << " TTC: " << TTC << endl;
 }
 
 #include <pcl/common/common_headers.h>

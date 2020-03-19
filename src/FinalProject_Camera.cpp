@@ -63,6 +63,7 @@ eval_summary _main(int argc, const char *argv[])
     bool bVis = false;            // visualize results
     bool bRemoveBBOutliers = false;
     bool bRemoveKptOutliers = false;
+    bool bPostKptOutliers = false;
 
     cout << "Options Summary: " << endl;
     for (int i = 1; i < argc; i++) {
@@ -86,7 +87,10 @@ eval_summary _main(int argc, const char *argv[])
             cout << "Remove BB Outliers: " << bRemoveBBOutliers << endl;   
         } else if (strncmp(argv[i], "-o2", 3) == 0) {
             bRemoveKptOutliers = true;
-            cout << "Remove Kpt Outliers: " << bRemoveKptOutliers << endl;         
+            cout << "Remove Kpt Outliers: " << bRemoveKptOutliers << endl; 
+        } else if (strncmp(argv[i], "-o3", 3) == 0) {
+            bPostKptOutliers = true;
+            cout << "Remove Kpt Post Outliers " << bPostKptOutliers << endl;            
         } else {
             cout << "unexpected argument found: " << argv[i] << endl;
             exit(-1);
@@ -403,13 +407,11 @@ eval_summary _main(int argc, const char *argv[])
                     cout << "  Step #11 : COMPUTE TTC CAMERA" << endl;
 
                     t = (double)cv::getTickCount();
-                    computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera, medTtcCamera);
+                    computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, 
+                        ttcCamera, medTtcCamera, bPostKptOutliers);
                     t = ((double)cv::getTickCount() - t) / cv::getTickFrequency();
                     summary.ttc_camera_time.push_back(t);
-
-                    cout << "FP:  medTtcCamera: " << medTtcCamera << endl;
-                    cout << "FP:  ttcCamera: " << ttcCamera << endl;
-                    //// EOF STUDENT ASSIGNMENT
+                   //// EOF STUDENT ASSIGNMENT
 
                     assert(!isnan(ttcCamera));
                     assert(!isnan(medTtcCamera));
@@ -496,16 +498,23 @@ void task8(ofstream &fout, vector<eval_summary> &summaries) {
 
 #endif
 
-void dump_frame_stats(ofstream &fout, vector<eval_summary> &summaries) {
-    fout << "detector,descriptor,matcher,selector,rem_bb_out,rem_kpt_out,keypoints,matchpts,proc_time,";
-    fout << "frame,ttcCamera,ttcLidar,medTtcCamera,medTtcLidar,xmin_raw,width_raw,xmin_filt,width_filt,time,delta_t" << endl;
+void dump_frame_stats(vector<eval_summary> &summaries) {
 
     for (auto const &eval : summaries) {
+        // string dataPath = "/home/dan/SFND_3D_Object_Tracking/";
+        string foutname = "/home/dan/SFND_3D_Object_Tracking/analysis/" + eval.detector_type + "_" + eval.descriptor_type + "_" +
+            eval.matcher_type + "_" + eval.selector_type + "_stats.csv";
+
+        ofstream fout(foutname, ios::out);    
+        fout << "detector,descriptor,matcher,selector,rem_bb_out,rem_kpt_out,rem_kpt_post_out,keypoints,matchpts,proc_time,";
+        fout << "frame,ttcCamera,ttcLidar,medTtcCamera,medTtcLidar,xmin_raw,width_raw,xmin_filt,width_filt,time,delta_t" << endl;
+
         for (int i = 1; i < eval.delta_t.size(); i++) {
             fout << eval.detector_type << "," << eval.descriptor_type << ",";
             fout << eval.matcher_type << "," << eval.selector_type << ",";
             fout << (eval.remove_bb_outliers ? "1" : "0") << ",";
             fout << (eval.remove_kpt_outliers ? "1" : "0") << ",";
+            fout << (eval.remove_kpt_post_outliers ? "1" : "0") << ",";
             fout << eval.detect_points[i] << "," << eval.match_points[i] << ",";
             fout << eval.total_processing_time[i] << ",";
             fout << i << ",";
@@ -517,22 +526,26 @@ void dump_frame_stats(ofstream &fout, vector<eval_summary> &summaries) {
             fout << eval.lidar_estimates[i].width_filtered << ",";
             fout << eval.current_time[i] << "," << eval.delta_t[i] << endl;
         }
+
+        cout << "Wrote summary statistics to: " << foutname << endl;
+        fout.close();
     }
 }
 
 int batch_main(int argc, const char *argv[]) {
     // vector<string> detectors =  { "SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE", "SIFT" };
     vector<string> detectors =  { "SHITOMASI" };
-    // vector<string> matchers =  { "MAT_BF", "MAT_FLANN" };
-    vector<string> matchers =  { "MAT_BF" };
+    vector<string> matchers =  { "MAT_BF", "MAT_FLANN" };
+    // vector<string> matchers =  { "MAT_BF" };
     // SIFT with ORB results in OOM exceptions
-    // vector<string> descriptors =  { "BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT" };
-    vector<string> descriptors =  { "ORB" };
-    // vector<string> selectors =  { "SEL_NN", "SEL_KNN" };
-    vector<string> selectors =  { "SEL_KNN" };
+    vector<string> descriptors =  { "BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT" };
+    // vector<string> descriptors =  { "ORB" };
+    vector<string> selectors =  { "SEL_NN", "SEL_KNN" };
+    // vector<string> selectors =  { "SEL_KNN" };
 
     bool removeBBOutliers = false;
     bool removeKptOutliers = false;
+    bool removeKptPostOutliers = false;
     bool visualize = false;
     for (int i = 0; i < argc; i++) {
         if (strncmp(argv[i], "-o1", 3) == 0) {
@@ -541,12 +554,15 @@ int batch_main(int argc, const char *argv[]) {
         if (strncmp(argv[i], "-o2", 3) == 0) {
             removeKptOutliers = true;
         }
+        if (strncmp(argv[i], "-o3", 3) == 0) {
+            removeKptPostOutliers = true;
+        }
         if (strncmp(argv[i], "-v", 2) == 0) {
             visualize = true;
         }
     }
 
-    const char *args[12];  // required + three optional flags
+    const char *args[13];  // required + three optional flags
     args[0] = argv[0];
     args[1] = "-d";
     args[3] = "-x";
@@ -577,6 +593,9 @@ int batch_main(int argc, const char *argv[]) {
                     if (removeKptOutliers) {
                         args[ac++] = "-o2";
                     }
+                    if (removeKptPostOutliers) {
+                        args[ac++] = "-o3";
+                    }
                     if (visualize) {
                         args[ac++] = "-v";
                     }
@@ -592,14 +611,14 @@ int batch_main(int argc, const char *argv[]) {
     // double  match_time[MAX_EVALS];
     // int     match_points[MAX_EVALS];
 
-    string foutname("summary_stats.csv");
-    ofstream fout(foutname, ios::out);
 
     if (true) {
-        dump_frame_stats(fout, summaries);
+        dump_frame_stats(summaries);
         // task8(fout, summaries);
     } else {
-        fout << "detector, descriptor, matcher, selector, rem_bb_out, rem_kpt_out, avg_keypoints, avg_matchpts, avg_time" << endl;
+        string foutname("summary_stats.csv");
+        ofstream fout(foutname, ios::out);
+        fout << "detector, descriptor, matcher, selector, rem_bb_out, rem_kpt_out, rem_kpt_post_out, avg_keypoints, avg_matchpts, avg_time" << endl;
         for (auto &eval : summaries) {
             double avg_detect_time_ms, std_detect_time_ms;
             // tie(avg_detect_time_ms, std_detect_time_ms) = do_stats(std::vector<double>(eval.detect_time.begin() + 1, eval.detect_time.end()));
@@ -613,6 +632,7 @@ int batch_main(int argc, const char *argv[]) {
             cout << eval.matcher_type << "," << eval.selector_type << ",";
             cout << (eval.remove_bb_outliers ? "1" : "0") << ",";
             cout << (eval.remove_kpt_outliers ? "1" : "0") << ",";
+            cout << (eval.remove_kpt_post_outliers ? "1" : "0") << ",";
             cout << " avg_kpts: " << avg_detect_pts << "[pts],";
             cout << " avg_mat_pts: " << avg_match_pts << "[pts],";
             cout << " time: " << avg_processing_time << "[ms]" << endl; 
@@ -625,10 +645,11 @@ int batch_main(int argc, const char *argv[]) {
             fout << avg_match_pts << ", ";
             fout << avg_processing_time << endl;
         }
-    }
-    fout.close();
+        fout.close();
 
-    cout << "Summary written to: " << foutname << endl;
+        cout << "Summary written to: " << foutname << endl;
+    }
+
 }
 
 int main(int argc, const char *argv[]) {
@@ -652,6 +673,7 @@ int main(int argc, const char *argv[]) {
         cout << " Selector Type: " << summary.selector_type << endl;
         cout << "  Option:  Remove BB Outliers: " << summary.remove_bb_outliers << endl;
         cout << "  Option:  Remove Kpt Outliers: " << summary.remove_kpt_outliers << endl;
+        cout << "  Option:  Remove Kpt Post Outliers: " << summary.remove_kpt_post_outliers << endl;
 
         for (int i = 1; i < summary.total_processing_time.size() - 1; i++) {
             // cout << "detect_time: " << summary.detect_time[i]*1000 << "[ms] points: " << summary.detect_points[i] << " ";

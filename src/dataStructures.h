@@ -56,6 +56,7 @@ struct eval_summary {
     std::string  selector_type;
     bool remove_bb_outliers;
     bool remove_kpt_outliers;
+    bool remove_kpt_post_outliers;
 
     int det_err_cnt;
     int des_err_cnt;

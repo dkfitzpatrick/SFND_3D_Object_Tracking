@@ -21,7 +21,7 @@ lidar_data show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size world
     bool bVis, bool bWait=true, bool removeOutliers=false);
 
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr,
-    std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, double &medTTC, cv::Mat *visImg=nullptr);
+    std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, double &medTTC, bool postFilter, cv::Mat *visImg=nullptr);
 
 void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
     std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC, double &medTTC, bool removeOutliers);     
