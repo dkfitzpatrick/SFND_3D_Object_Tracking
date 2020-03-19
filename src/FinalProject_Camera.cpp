@@ -106,6 +106,7 @@ eval_summary _main(int argc, const char *argv[])
     eval_stats stats;
     eval_summary summary;
 
+    summary.passed = true;
     summary.detector_type = detectorType;
     summary.matcher_type = matcherType;
     summary.descriptor_type = descriptorType;
@@ -206,6 +207,7 @@ eval_summary _main(int argc, const char *argv[])
             summary.classify_time.push_back(t);
             // cout << "      done in " << t*1000 << "[ms]" << endl;
         } catch (exception &e) {
+            summary.passed = false;
             cerr << "        Exception occurred: " << e.what() << endl;
             continue;
         }
@@ -270,6 +272,7 @@ eval_summary _main(int argc, const char *argv[])
         } catch (exception &e) {
             cerr << "        Exception occurred while processing keypoints: " << e.what() << endl;
             summary.det_err_cnt += 1;
+            summary.passed = false;
             continue;
         }
 
@@ -301,6 +304,7 @@ eval_summary _main(int argc, const char *argv[])
         } catch (exception &e) {
             cerr << "        Exception occurred while processing descriptors: " << e.what() << endl;
             summary.des_err_cnt += 1;
+            summary.passed = false;
             continue;
         }
         
@@ -327,6 +331,7 @@ eval_summary _main(int argc, const char *argv[])
             } catch (exception &e) {
                 cerr << "        Exception occurred while processing matches: " << e.what() << endl;
                 summary.mat_err_cnt += 1;
+                summary.passed = false;
                 continue;
             }
             // store matches in current data frame
@@ -413,8 +418,11 @@ eval_summary _main(int argc, const char *argv[])
                     summary.ttc_camera_time.push_back(t);
                    //// EOF STUDENT ASSIGNMENT
 
-                    assert(!isnan(ttcCamera));
-                    assert(!isnan(medTtcCamera));
+                    if (isnan(ttcCamera) || isnan(medTtcCamera)) {
+                        summary.passed = false;
+                        cout << "  Compute TTC Camera returned NAN" << endl;
+                        continue;
+                    }
 
                     if (bVis)
                     {
@@ -423,7 +431,7 @@ eval_summary _main(int argc, const char *argv[])
                         cv::rectangle(visImg, cv::Point(currBB->roi.x, currBB->roi.y), cv::Point(currBB->roi.x + currBB->roi.width, currBB->roi.y + currBB->roi.height), cv::Scalar(0, 255, 0), 2);
                         
                         char str[200];
-                        sprintf(str, "TTC Lidar : %f s, TTC Camera : %f s", ttcLidar, ttcCamera);
+                        sprintf(str, "TTC (avg) Lidar : %f s, TTC (med) Camera : %f s", ttcLidar, medTtcCamera);
                         putText(visImg, str, cv::Point2f(80, 50), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0,0,255));
 
                         string windowName = "Final Results : TTC";
@@ -504,6 +512,10 @@ void dump_frame_stats(vector<eval_summary> &summaries) {
         // string dataPath = "/home/dan/SFND_3D_Object_Tracking/";
         string foutname = "/home/dan/SFND_3D_Object_Tracking/analysis/" + eval.detector_type + "_" + eval.descriptor_type + "_" +
             eval.matcher_type + "_" + eval.selector_type + "_stats.csv";
+        if (!eval.passed) {
+            cout << "Skipping becaused failed: " << foutname << endl;
+            continue;
+        }
 
         ofstream fout(foutname, ios::out);    
         fout << "detector,descriptor,matcher,selector,rem_bb_out,rem_kpt_out,rem_kpt_post_out,keypoints,matchpts,proc_time,";
@@ -534,7 +546,7 @@ void dump_frame_stats(vector<eval_summary> &summaries) {
 
 int batch_main(int argc, const char *argv[]) {
     // vector<string> detectors =  { "SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE", "SIFT" };
-    vector<string> detectors =  { "SHITOMASI" };
+    vector<string> detectors =  { "SIFT" };
     vector<string> matchers =  { "MAT_BF", "MAT_FLANN" };
     // vector<string> matchers =  { "MAT_BF" };
     // SIFT with ORB results in OOM exceptions

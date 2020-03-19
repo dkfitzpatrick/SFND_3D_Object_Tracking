@@ -50,6 +50,7 @@ struct lidar_data {
 };
 
 struct eval_summary {
+    bool passed;
     std::string  detector_type;
     std::string  descriptor_type;
     std::string  matcher_type;

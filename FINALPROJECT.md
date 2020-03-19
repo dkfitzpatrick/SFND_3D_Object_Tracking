@@ -59,7 +59,7 @@ The algorithm involves two steps:
 threshold = pt.mean + std_mult*pt.sigma).   
 ```
 
-In addition, the outlier detection ignores the height dimension for distance calculation (essentially squashing the points).  The following image shows the same lidar points from frame #11, but with the outliers colored in read, using nn = 10, and std_mult = 1 (show3DObjects() was modified to provide stats and annotation for assessing the algorthim).  The outliers are then ommitted from inclusion in TTC averaging.
+In addition, the outlier detection ignores the height dimension for distance calculation (essentially squashing the points vertically).  The following image shows the same lidar points from frame #11, but with the outliers colored in read, using nn = 10, and std_mult = 1 (show3DObjects() was modified to provide stats and annotation for assessing the algorthim).  The outliers are then ommitted from inclusion in TTC averaging.
 
 <img src="docimages/filteredlidardata.png" width="420" height="280" />
 
@@ -67,7 +67,7 @@ In the subsequent analyses, values of nn=10, and std_mult=1.0 are used. This opt
 
 ## Task FP.3 : Associate Keypoint Correspondences with Bounding Boxes
 
-For each keypoint match, we associate it to any bounding box region of interest in the current frame.  Because the following TTC estimate is based on the ratio of change between between a consensus of these matches, an approach to filtering was attempted to eliminate distance changes that were either too large or too small (both maybe more likely due to keypoint matching error).
+For each keypoint match, we associate it to any bounding box region of interest in the current frame.  Because the following TTC estimate is based on the ratio of change between between a consensus of these matches(O(n^2)), an approach to filtering was attempted to eliminate distance changes that were either too large or too small (both maybe more likely due to keypoint matching error).
 
 This algorithm also involved two steps:
 
