@@ -113,6 +113,7 @@ eval_summary _main(int argc, const char *argv[])
     summary.selector_type = selectorType;
     summary.remove_bb_outliers = bRemoveBBOutliers;
     summary.remove_kpt_outliers = bRemoveKptOutliers;
+    summary.remove_kpt_post_outliers = bPostKptOutliers;
     summary.det_err_cnt = 0;
     summary.des_err_cnt = 0;
     summary.mat_err_cnt = 0;
@@ -555,21 +556,33 @@ int batch_main(int argc, const char *argv[]) {
     vector<string> selectors =  { "SEL_NN", "SEL_KNN" };
     // vector<string> selectors =  { "SEL_KNN" };
 
+
+    // identify all arguments in order to allo re-building for all given combinations
     bool removeBBOutliers = false;
     bool removeKptOutliers = false;
     bool removeKptPostOutliers = false;
     bool visualize = false;
     for (int i = 0; i < argc; i++) {
-        if (strncmp(argv[i], "-o1", 3) == 0) {
+        // allow over-rides if specified with batch flag
+        if (strcmp(argv[i], "-d") == 0) {
+            detectors.clear();
+            detectors.push_back(argv[++i]);
+        } else if (strcmp(argv[i], "-m") == 0) {
+            matchers.clear();
+            matchers.push_back(argv[++i]);
+        } else if (strcmp(argv[i], "-x") == 0) {
+            descriptors.clear();
+            descriptors.push_back(argv[++i]);
+        } else if (strcmp(argv[i], "-s") == 0) {
+            selectors.clear();
+            selectors.push_back(argv[++i]);
+        } else  if (strncmp(argv[i], "-o1", 3) == 0) {
             removeBBOutliers = true;
-        }
-        if (strncmp(argv[i], "-o2", 3) == 0) {
+        } else if (strncmp(argv[i], "-o2", 3) == 0) {
             removeKptOutliers = true;
-        }
-        if (strncmp(argv[i], "-o3", 3) == 0) {
+        } else if (strncmp(argv[i], "-o3", 3) == 0) {
             removeKptPostOutliers = true;
-        }
-        if (strncmp(argv[i], "-v", 2) == 0) {
+        } else if (strncmp(argv[i], "-v", 2) == 0) {
             visualize = true;
         }
     }
