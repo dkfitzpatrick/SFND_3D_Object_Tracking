@@ -170,7 +170,7 @@ It appears that AKAZE feature detectors perform better in terms of accuracy wrt 
 See stats_full.csv.   Table headers are:
 
 ```
-
+detector,descriptor,matcher,selector,rem_bb_out,rem_kpt_out,rem_kpt_post_out,keypoints,matchpts,proc_time,frame,ttcCamera,ttcLidar,medTtcCamera,medTtcLidar,xmin_raw,width_raw,xmin_filt,width_filt,time,delta_t
 ```
 
 ## Appendix  A. Analysis Summary
@@ -178,6 +178,6 @@ See stats_full.csv.   Table headers are:
 See stats_summary.csv.   Table headers are:
 
 ```
-
+filename,avgkpts,avgmats,avglidcorr,medlidcorr,avgcamcorr,medcamcorr
 ```
 

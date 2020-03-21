@@ -511,7 +511,9 @@ void dump_frame_stats(vector<eval_summary> &summaries) {
 
     for (auto const &eval : summaries) {
         // string dataPath = "/home/dan/SFND_3D_Object_Tracking/";
-        string foutname = "/home/dan/SFND_3D_Object_Tracking/analysis/" + eval.detector_type + "_" + eval.descriptor_type + "_" +
+        // string foutname = "/home/dan/SFND_3D_Object_Tracking/analysis/";
+        string foutname = "./";
+        foutname += eval.detector_type + "_" + eval.descriptor_type + "_" +
             eval.matcher_type + "_" + eval.selector_type + "_stats.csv";
         if (!eval.passed) {
             cout << "Skipping becaused failed: " << foutname << endl;
