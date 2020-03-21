@@ -480,7 +480,7 @@ std::vector<bool> findInliers(const std::vector<LidarPoint> &lpoints, int nn, do
     }
 #endif
 
-    // mark the points in the cloud (pt) in whch the mean distance is greater than the threshold
+    // mark the points in the cloud (pt) in which the mean distance is greater than the threshold
     // threshold => pt.mean + std_mult*pt.sigma
     double mean = accumulate(dist.begin(), dist.end(), 0.0)/size;
     double var =  accumulate(dist.begin(), dist.end(), 0.0, 
